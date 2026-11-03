@@ -1,0 +1,8 @@
+app/models/schema.kvl(215,9) [errValidationError] 
+    |
+210 | mut user_id = 0
+    | ... 
+215 | mut user_id = 10
+    V     ~~~~~~~
+duplicate key 'user_id' in object literal
+  first defined at line 210
