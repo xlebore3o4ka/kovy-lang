@@ -44,6 +44,7 @@ macro tokenKinds*(kinds: untyped): untyped =
 
 tokenKinds:
   tkEOF: "end of file"
+  tkEOS: "end of statement"
 
   tkNumber: "number literal"
 
@@ -55,6 +56,9 @@ tokenKinds:
   tkLParen: "left-paren '('"
   tkRParen: "right-paren ')'"
 
+  tkIndent: "indentation"
+  tkDedent: "dedentation"
+
 type
   Token* = object
     kind*: TokenKind
@@ -63,7 +67,10 @@ type
     line*: Positive = 1
     file*: Natural
 
+template mean*(t: Token): string = t.kind.mean()
+
 var operatorsTable*: Table[string, TokenKind]
+registerOp tkEOS,    ";"
 registerOp tkPlus,   "+"
 registerOp tkMinus,  "-"
 registerOp tkStar,   "*"

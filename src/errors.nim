@@ -2,7 +2,7 @@ import std/[json, tables, os]
 
 type
   ErrorKind* = enum
-    errUnknownCharacter
+    errUnknownCharacter, errNotExpression
 
   Error* = object
     kind*: ErrorKind
@@ -18,9 +18,13 @@ type
 
   LocaleLoadError* = object of CatchableError
 
-proc newError*(kind: ErrorKind, file: Natural, line, col: Positive, 
+proc newError*(kind: ErrorKind, file: Natural, line, col: Positive,
     length: Natural, placeholders: varargs[string, `$`]): Error =
   Error(kind: kind, placeholders: @placeholders, file: file, line: line, col: col, length: length)
+
+proc newError*(kind: ErrorKind, file: Natural, line, col: Positive,
+    length: Natural, placeholders: seq[string]): Error =
+  Error(kind: kind, placeholders: placeholders, file: file, line: line, col: col, length: length)
 
 proc newErrorContext*(jsonPath: string): ErrorContext =
   if fileExists(jsonPath):

@@ -1,11 +1,13 @@
-import parser/[lexer, tokens], errors, std/os
+import parser/[lexer, parser]
+import errors, ast
+import std/os
 
-let source = "42 + 3 * (1 - 5)"
+let source = """
+1 + 2 * 2
+"""
 let jsonPath = currentSourcePath().parentDir() / "error_locales" / "en.json"
-var lex = Lexer(source: source, errors: newErrorContext(jsonPath))
+let errCtx = newErrorContext(jsonPath)
+let lex = newLexer(source, errCtx)
+let prs = newParser(lex, errCtx)
 
-while true:
-  let tok = lex.nextTok()
-  echo tok.kind, " ", tok.lexeme
-  if tok.kind == tkEOF:
-    break
+echo prs.parseExpr().toStr()
