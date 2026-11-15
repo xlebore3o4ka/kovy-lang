@@ -12,6 +12,7 @@ bin           = @["kovylang"]
 # Dependencies
 
 requires "nim >= 2.2.10"
+requires "llvnim >= 1.3.0"
 
 task myRun, "Run with the required flags":
   exec "nimble --debugger:native --stacktrace:on --linetrace:on -d:debug --passC:-D_GNU_SOURCE -d:nimNoLentIterators run -- " & commandLineParams.join(" ")

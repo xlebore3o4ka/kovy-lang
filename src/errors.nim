@@ -2,7 +2,9 @@ import std/[json, tables, os]
 
 type
   ErrorKind* = enum
-    errUnknownCharacter, errNotExpression
+    errUnknownCharacter, errNotExpression, errSyntax, errTypeSyntax,
+    errUnknownSymbol, errDoesNotFit, errBinaryMismatch, errUnaryMismatch,
+    errRedeclaration, errImmutableAssignment, errIndent
 
   Error* = object
     kind*: ErrorKind
@@ -32,7 +34,14 @@ proc newErrorContext*(jsonPath: string): ErrorContext =
     let jsonData = parseJson(jsonContent)
     var placeholdersTable = initTable[string, tuple[message: string, addinfo: string]]()
     for key, value in jsonData.pairs:
-      placeholdersTable[key] = (message: value["message"].str, addinfo: value["addinfo"].str)
+      if value.kind != JObject:
+        continue
+      let message = value{"message"}
+      if message == nil:
+        continue
+      let addinfo = value{"addinfo"}
+      placeholdersTable[key] = (message: message.getStr,
+                              addinfo: if addinfo == nil: "" else: addinfo.getStr)
     return ErrorContext(errors: @[], placeholders: placeholdersTable)
 
   else:
@@ -40,3 +49,6 @@ proc newErrorContext*(jsonPath: string): ErrorContext =
 
 proc add*(ctx: ErrorContext, error: Error) =
   ctx.errors.add(error)
+
+proc hasErrors*(ctx: ErrorContext): bool =
+  ctx.errors.len > 0
