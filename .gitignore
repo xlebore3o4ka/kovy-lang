@@ -53,7 +53,6 @@ xcuserdata/
 /reject.json
 /run.json
 /tools/dochack/dochack.js
-*.json
 /pkgstemp/**/*
 # for `nim doc foo.nim`
 /*.html

@@ -1,0 +1,102 @@
+{
+  "FORMAT_INFO": [
+    "@Xn - this is a placeholder. after formatting, the value will be in its place",
+    "X - a modifier in the placeholder. The formatter must distinguish between the following modifiers:",
+    "q (quoted) - The value will be displayed in quotation marks: '10'",
+    "c (code) - The value will be displayed in the backticks: `10`",
+    "f (file) - the file ID is converted to a path: path/to/file",
+    "n (number) - The number will be colored if possible: [cyan]`10`"
+  ],
+  "errUnknownCharacter": {
+    "message": "Unknown character: @q0",
+    "addinfo": ""
+  },
+  "errExpressionExpected": {
+    "message": "Expected expression after @c1, got @0",
+    "addinfo": "@0 is not an expression"
+  },
+  "errStatementExpected": {
+    "message": "@0 is not a statement",
+    "addinfo": "Only the statement is allowed in this position"
+  },
+  "errContextScope": {
+    "message": "@q0 statement outside @q1 context",
+    "addinfo": ""
+  },
+  "errSyntax": {
+    "message": "Syntax error, expected @0, got @1",
+    "addinfo": "Expected syntax: @c2"
+  },
+  "errTypeSyntax": {
+    "message": "Syntax error for a type",
+    "addinfo": ""
+  },
+  "errUnknownSymbol": {
+    "message": "Unknown symbol: @q0",
+    "addinfo": "Perhaps you meant @q1?"
+  },
+  "errDoesNotFit": {
+    "message": "Type @c0 does not fit into type @c1",
+    "addinfo": ""
+  },
+  "errRedeclaration": {
+    "message": "Redeclaring the @q0 symbol",
+    "addinfo": "Last declared in file @f1, line @2"
+  },
+  "errBinaryMismatch": {
+    "message": "Binary type mismatch for @0: @c1",
+    "addinfo": ""
+  },
+  "errUnaryMismatch": {
+    "message": "Unary type mismatch for @0 with type @1",
+    "addinfo": ""
+  },
+  "errImmutableAssignment": {
+    "message": "Cannot assign a value to an immutable expression",
+    "addinfo": "@c0 - is immutable @c1"
+  },
+  "errIndent": {
+    "message": "Invalid indentation",
+    "addinfo": ""
+  },
+  "errIllformedArgument": {
+    "message": "The argument must be a valid symbol declaration, not a function.",
+    "addinfo": ""
+  },
+  "errVoidReturnValue": {
+    "message": "Cannot return a value from a void function",
+    "addinfo": ""
+  },
+  "errReturnValueExpected": {
+    "message": "Expected return value of type @c0",
+    "addinfo": ""
+  },
+  "errNotCallable": {
+    "message": "Expression @c0 is not callable",
+    "addinfo": ""
+  },
+  "errWrongArity": {
+    "message": "Wrong number of arguments: expected @n1, got @n0",
+    "addinfo": ""
+  },
+  "errArgMismatch": {
+    "message": "Argument @c0 has type @c1, expected @c2",
+    "addinfo": ""
+  },
+  "errReturnDanglingMutable": {
+    "message": "Cannot return mutable symbol @q0: its lifetime does not exceed the function scope",
+    "addinfo": "Declared in file @f1, line @2"
+  },
+  "errImmutableReturn": {
+    "message": "Cannot return an immutable value from a mutable function",
+    "addinfo": ""
+  },
+  "errNotAllPathsReturn": {
+    "message": "Not all control paths return a value",
+    "addinfo": ""
+  },
+  "errUnreachableCode": {
+    "message": "Unreachable code from line @0 to line @1",
+    "addinfo": ""
+  }
+}
