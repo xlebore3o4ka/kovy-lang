@@ -4,11 +4,15 @@ import visitors/[sema, nimgen]
 import std/[os]
 
 let source = """
-int mut a():
-  int mut a;
-  return a
-
-a() = 10
+int a(bool b):
+  if b:
+    this()
+    code()
+    has()
+    no()
+    return_()
+  else:
+    return 1
 """
 
 let errCtx = newErrorContext(currentSourcePath().parentDir() / "error_locales" / "en.json")

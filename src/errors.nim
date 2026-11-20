@@ -18,6 +18,11 @@ type
 
     errNotCallable, errWrongArity, errArgMismatch
 
+    errReturnDanglingMutable
+    errImmutableReturn
+    errNotAllPathsReturn
+    errUnreachableCode
+
   Error* = object
     kind*: ErrorKind
     placeholders*: seq[string]
