@@ -1,5 +1,6 @@
 import parser/tokens
 import std/[strutils]
+import std/[sequtils]
 import types
 
 type
@@ -14,6 +15,12 @@ type
     nkExprStmt
     nkDecl
     nkBranch
+    nkWhile
+    nkBreak
+    nkContinue
+    nkFuncDecl
+    nkReturn
+    nkCall
 
   Node* = ref object of RootObj
     kind*: NodeKind
@@ -48,6 +55,21 @@ type
     ifThen*: Block
     elifs*: seq[tuple[cond: Expr, elifThen: Block]]
     elseThen*: Block
+  While* = ref object of Stmt
+    cond*: Expr
+    body*: Block
+  Break* = ref object of Stmt
+  Continue* = ref object of Stmt
+  FuncDecl* = ref object of Stmt
+    returnType*: Type
+    mut*: bool
+    arguments*: seq[Decl]
+    body*: Block
+  Return* = ref object of Stmt
+    value*: Expr
+  Call* = ref object of Expr
+    value*: Expr
+    arguments*: seq[Expr]
 
 proc newInvalidStmt*(token: Token): Stmt =
   InvalidStmt(kind: nkInvalid, token: token)
@@ -85,6 +107,26 @@ proc newBranch*(token: Token, cond: Expr, ifThen: Block,
   Branch(kind: nkBranch, token: token, cond: cond, ifThen: ifThen,
          elifs: elifs, elseThen: elseThen)
 
+proc newWhile*(token: Token, cond: Expr, body: Block): While =
+  While(kind: nkWhile, token: token, cond: cond, body: body)
+
+proc newBreak*(token: Token): Break =
+  Break(kind: nkBreak, token: token)
+
+proc newContinue*(token: Token): Continue =
+  Continue(kind: nkContinue, token: token)
+
+proc newFuncDecl*(token: Token, returnType: Type, mut: bool, arguments: seq[Decl],
+                 body: Block): FuncDecl =
+  FuncDecl(kind: nkFuncDecl, token: token, returnType: returnType, mut: mut,
+           arguments: arguments, body: body)
+
+proc newReturn*(token: Token, value: Expr): Return =
+  Return(kind: nkReturn, token: token, value: value)
+
+proc newCall*(token: Token, value: Expr, arguments: seq[Expr]): Call =
+  Call(kind: nkCall, token: token, value: value, arguments: arguments)
+
 proc addElif*(s: var seq[tuple[cond: Expr, elifThen: Block]],
               cond: Expr, elifThen: Block) =
   s.add((cond: cond, elifThen: elifThen))
@@ -108,4 +150,41 @@ proc toStr*(expr: Expr): string =
     else:
       un.token.lexeme & un.value.toStr
   of nkSymbol: expr.token.lexeme
+  of nkCall:
+    let c = Call(expr)
+    c.value.toStr & "(" & c.arguments.mapIt(it.toStr).join(", ") & ")"
+  else: ""
+
+proc toStr*(stmt: Stmt): string =
+  case stmt.kind
+  of nkBlock:
+    let b = Block(stmt)
+    "{" & b.stmts.mapIt(it.toStr).join("; ") & "}"
+  of nkExprStmt: ExprStmt(stmt).expr.toStr
+  of nkDecl:
+    let d = Decl(stmt)
+    d.typ.toStr & " " & d.token.lexeme &
+      (if d.value != nil: " = " & d.value.toStr else: "")
+  of nkBranch:
+    let b = Branch(stmt)
+    var parts = @["if " & b.cond.toStr & " " & b.ifThen.toStr]
+    for (c, t) in b.elifs:
+      parts.add "elif " & c.toStr & " " & t.toStr
+    if b.elseThen != nil:
+      parts.add "else " & b.elseThen.toStr
+    parts.join(" ")
+  of nkWhile:
+    let w = While(stmt)
+    "while " & w.cond.toStr & " " & w.body.toStr
+  of nkBreak: "break"
+  of nkContinue: "continue"
+  of nkFuncDecl:
+    let f = FuncDecl(stmt)
+    f.returnType.toStr & " " & f.token.lexeme &
+      "(" & f.arguments.mapIt(it.toStr).join(", ") & ")" &
+      (if f.body != nil: " " & f.body.toStr else: "")
+  of nkReturn:
+    let r = Return(stmt)
+    "return" & (if r.value != nil: " " & r.value.toStr else: "")
+  of nkInvalid: ""
   else: ""

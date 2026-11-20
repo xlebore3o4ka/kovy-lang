@@ -17,6 +17,8 @@ tokenKinds:
   tkLParen: "left-paren '('"
   tkRParen: "right-paren ')'"
 
+  tkComma: "comma ','"
+
   tkEquals: "equals operator '='"
   tkColon: "colon operator ':'"
 
@@ -32,6 +34,7 @@ tokenKinds:
 
   tkInt: "keyword 'int'"
   tkBool: "keyword 'bool'"
+  tkVoid: "keyword 'void'"
 
   tkTrue: "keyword 'true'"
   tkFalse: "keyword 'false'"
@@ -43,6 +46,10 @@ tokenKinds:
   tkIf: "keyword 'if'"
   tkElif: "keyword 'elif'"
   tkElse: "keyword 'else'"
+  tkWhile: "keyword 'while'"
+  tkBreak: "keyword 'break'"
+  tkContinue: "keyword 'continue'"
+  tkReturn: "keyword 'return'"
 
 type
   Token* = object
@@ -66,6 +73,7 @@ registerOp tkStar,   "*"
 registerOp tkSlash,  "/"
 registerOp tkLParen, "("
 registerOp tkRParen, ")"
+registerOp tkComma,  ","
 registerOp tkEquals, "="
 registerOp tkGt,     ">"
 registerOp tkLt,     "<"
@@ -78,6 +86,7 @@ registerOp tkColon,  ":"
 var keywordsTable*: Table[string, TokenKind]
 registerKw tkInt, "int"
 registerKw tkBool, "bool"
+registerKw tkVoid, "void"
 registerKw tkTrue, "true"
 registerKw tkFalse, "false"
 registerKw tkNot, "not"
@@ -87,6 +96,10 @@ registerKw tkMut, "mut"
 registerKw tkIf, "if"
 registerKw tkElif, "elif"
 registerKw tkElse, "else"
+registerKw tkWhile, "while"
+registerKw tkBreak, "break"
+registerKw tkContinue, "continue"
+registerKw tkReturn, "return"
 
 proc newToken*(kind: TokenKind, lexeme: string, line, col: Positive, file: Natural): Token =
   Token(kind: kind, lexeme: lexeme, file: file, line: line, col: col)

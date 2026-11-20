@@ -10,15 +10,29 @@ type
   Scope = ref object
     depth: Natural
     symbolTable: Table[string, Sym]
+    overloadTable: Table[string, seq[FuncDecl]]
     case isGlobal: bool
     of false: parent: Scope
     of true: discard
+
+  ContextScopeKind = enum
+    cskBranch = "branch"
+    cskLoop = "loop"
+    cskFunc = "func"
+    cskFuncArguments = "func-arguments"
+
+  ContextScope = object
+    case kind*: ContextScopeKind
+    of cskFunc:
+      funcReturnType*: Type
+    else: discard
 
   Sema* = ref object
     errors*: ErrorContext
 
     currentScope: Scope
     symbolScopeStack: Table[string, seq[Scope]]
+    contextScopeStack: seq[ContextScope]
 
 proc newSema*(errors: ErrorContext): Sema =
   Sema(errors: errors,
@@ -31,23 +45,41 @@ proc newSymbol(self: Sema, token: Token, typ: Type) =
   self.currentScope.symbolTable[token.lexeme] = Sym(token: token, symbolType: typ)
   self.symbolScopeStack.mgetOrPut(token.lexeme, @[]).add(self.currentScope)
 
-proc pushScope(self: Sema) =
+proc pushScope(self: Sema, scope: ContextScope) =
   let depth = self.currentScope.depth
   self.currentScope = Scope(isGlobal: false, symbolTable: initTable[string, Sym](), 
     parent: self.currentScope, depth: depth + 1)
+  self.contextScopeStack.add(scope)
 
 proc popScope(self: Sema) =
   let scope = self.currentScope
   for name in scope.symbolTable.keys:
     discard self.symbolScopeStack[name].pop()
   self.currentScope = scope.parent
+  discard self.contextScopeStack.pop()
+
+proc isLoopContext(self: Sema): bool =
+  for scope in self.contextScopeStack:
+    if scope.kind == cskLoop:
+      return true
+  return false
+
+proc isFuncContext(self: Sema): bool =
+  for scope in self.contextScopeStack:
+    if scope.kind == cskFunc:
+      return true
+  return false
+
+proc getFuncContext(self: Sema): ContextScope =
+  for i in countdown(self.contextScopeStack.high, 0):
+    if self.contextScopeStack[i].kind == cskFunc:
+      return self.contextScopeStack[i]
+  return ContextScope()
 
 proc symbolExists(self: Sema, name: string): bool =
   name in self.symbolScopeStack and self.symbolScopeStack[name].len > 0
 
 proc getSymbol(self: Sema, name: string): Sym =
-  if not self.symbolExists(name):
-    return Sym()
   let scope = self.symbolScopeStack[name][^1]
   result = scope.symbolTable[name]
 
@@ -184,6 +216,7 @@ proc visit*(self: Sema, node: Symbol): Type =
   let name = node.token.lexeme
   if not self.symbolExists(name):
     self.newError(node, errUnknownSymbol, name, self.suggestName(name))
+    return newErrorType()
 
   return self.getSymbol(name).symbolType
 
@@ -194,11 +227,11 @@ proc visit*(self: Sema, node: Binary): Type =
 
   if node.token.kind == tkEquals:
     if ltype.kind != typeMutable:
-      self.newError(node, errImmutableAssignment, node.lvalue.toStr())
+      self.newError(node, errImmutableAssignment, node.lvalue.toStr(), ltype.toStr())
       return newErrorType()
     let inner = ltype.args[0]
     if not self.fits(rtype, inner):
-      self.newError(node, errBinaryMismatch, node.token.mean(), rtype.toStr & " " & node.token.lexeme & " " & inner.toStr)
+      self.newError(node, errBinaryMismatch, node.token.mean(), inner.toStr & " " & node.token.lexeme & " " & rtype.toStr)
       return newErrorType()
     return newMutableType(inner)
 
@@ -218,6 +251,33 @@ proc visit*(self: Sema, node: Unary): Type =
     return newErrorType()
   return typeOfKind(res)
 
+proc visit*(self: Sema, node: Call): Type =
+  let callee = self.visit(node.value)
+  self.handleErrorType(callee)
+
+  var argTypes: seq[Type]
+  for a in node.arguments:
+    let t = self.visit(a)
+    self.handleErrorType(t)
+    argTypes.add t
+
+  if callee.kind != typeFunc:
+    self.newError(node.value, errNotCallable, node.value.toStr)
+    return newErrorType()
+
+  if argTypes.len != callee.funcArgTypes.len:
+    self.newError(node, errWrongArity, $argTypes.len, $callee.funcArgTypes.len)
+    return newErrorType()
+
+  for i in 0 ..< callee.funcArgTypes.len:
+    if not self.fits(argTypes[i], callee.funcArgTypes[i]):
+      let arg = node.arguments[i]
+      self.newError(arg, errArgMismatch, arg.toStr, argTypes[i].toStr,
+                   callee.funcArgTypes[i].toStr)
+      return newErrorType()
+
+  return callee.funcReturnType[]
+
 proc visit*(self: Sema, node: Block): bool =
   for stmt in node.stmts:
     discard self.visit(stmt)
@@ -235,7 +295,9 @@ proc visit*(self: Sema, node: Decl): bool =
 
   if node.value != nil:
     let typ = self.visit(node.value)
-    self.manageErrorType(typ)
+    if typ.kind == typeError:
+      successfulness = false
+
     if not self.fits(typ, expectedType):
       self.newError(node, errDoesNotFit, typ.toStr, expectedType.toStr)
       successfulness = false
@@ -256,35 +318,117 @@ proc visit*(self: Sema, node: Branch): bool =
   let condType = self.visit(node.cond)
   let boolType = newBoolType()
 
-  var successfulness = true
+  result = true
 
   if not self.fits(condType, boolType):
     self.newError(node, errDoesNotFit, condType.toStr, boolType.toStr)
-    successfulness = false
+    result = false
 
-  self.pushScope()
+  self.pushScope(ContextScope(kind: cskBranch))
   if not self.visit(node.ifThen):
-    successfulness = false
+    result = false
   self.popScope()
 
   for (cond, elifThen) in node.elifs:
-    let condType = self.visit(node.cond)
+    let condType = self.visit(cond)
 
     if not self.fits(condType, boolType):
       self.newError(node, errDoesNotFit, condType.toStr, boolType.toStr)
-      successfulness = false
+      result = false
 
-    self.pushScope()
+    self.pushScope(ContextScope(kind: cskBranch))
     if not self.visit(elifThen):
-      successfulness = false
+      result = false
     self.popScope()
 
-  self.pushScope()
+  self.pushScope(ContextScope(kind: cskBranch))
   if node.elseThen != nil and not self.visit(node.elseThen):
-    successfulness = false
+    result = false
   self.popScope()
 
-  return successfulness
+proc visit*(self: Sema, node: While): bool =
+  let condType = self.visit(node.cond)
+  let boolType = newBoolType()
+
+  result = true
+
+  if not self.fits(condType, boolType):
+    self.newError(node, errDoesNotFit, condType.toStr, boolType.toStr)
+    result = false
+
+  self.pushScope(ContextScope(kind: cskLoop))
+  if not self.visit(node.body):
+    result = false
+  self.popScope()
+
+proc visit*(self: Sema, node: Break): bool =
+  if not self.isLoopContext():
+    self.newError(node, errContextScope, node.token.lexeme, cskLoop)
+    return false
+  return true
+
+proc visit*(self: Sema, node: Continue): bool =
+  if not self.isLoopContext():
+    self.newError(node, errContextScope, node.token.lexeme, cskLoop)
+    return false
+  return true
+
+proc visit*(self: Sema, node: FuncDecl): bool =
+  var argTypes: seq[Type]
+
+  for decl in node.arguments:
+    argTypes.add(decl.typ)
+
+  let funcType = newFuncType(
+      if node.mut: newMutableType(node.returnType) 
+      else: node.returnType, 
+    argTypes)
+
+  result = true
+
+  if self.symbolExists(node.token.lexeme):
+    raise newException(Exception, "Function overloading has not implemented yet")  # TODO
+  elif node.body == nil:
+    raise newException(Exception, "Function forward declaration not implemented yet")  # TODO
+  else:
+    self.newSymbol(node.token, funcType)
+
+  self.pushScope(ContextScope(kind: cskFuncArguments))
+
+  for decl in node.arguments:
+    if not self.visit(decl):
+      result = false
+
+  if not result:
+    return false
+
+  self.pushScope(ContextScope(kind: cskFunc, funcReturnType: node.returnType))
+
+  if not self.visit(node.body):
+    result = false
+
+  self.popScope()
+  self.popScope()
+
+proc visit*(self: Sema, node: Return): bool =
+  result = true
+  
+  if not self.isFuncContext():
+    self.newError(node, errContextScope, node.token.lexeme, cskFunc)
+    return false
+
+  let context = self.getFuncContext() 
+
+  if node.value != nil:
+    if context.funcReturnType.kind == typeVoid:
+      self.newError(node, errVoidReturnValue)
+      return false
+    elif not self.fits((let t = self.visit(node.value); t), context.funcReturnType):
+      self.newError(node, errDoesNotFit, t.toStr, context.funcReturnType.toStr)
+      return false
+  elif context.funcReturnType.kind != typeVoid:
+    self.newError(node, errReturnValueExpected, context.funcReturnType.toStr)
+    return false
 
 proc visit*(self: Sema, node: Expr): Type =
   case node.kind
@@ -293,6 +437,7 @@ proc visit*(self: Sema, node: Expr): Type =
   of nkSymbol: result = self.visit(Symbol(node))
   of nkBinary: result = self.visit(Binary(node))
   of nkUnary:  result = self.visit(Unary(node))
+  of nkCall:   result = self.visit(Call(node))
   else: result = newErrorType()
 
 proc visit*(self: Sema, node: Stmt): bool =
@@ -301,5 +446,10 @@ proc visit*(self: Sema, node: Stmt): bool =
   of nkExprStmt: result = self.visit(ExprStmt(node))
   of nkDecl:     result = self.visit(Decl(node))
   of nkBranch:   result = self.visit(Branch(node))
+  of nkWhile:    result = self.visit(While(node))
+  of nkBreak:    result = self.visit(Break(node))
+  of nkContinue: result = self.visit(Continue(node))
+  of nkFuncDecl: result = self.visit(FuncDecl(node))
+  of nkReturn:   result = self.visit(Return(node))
   else: result = true
   

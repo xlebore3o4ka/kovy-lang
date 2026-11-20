@@ -6,6 +6,7 @@ type
   Parser* = ref object
     lexer*: Lexer
     errors*: ErrorContext
+    highLevelExpr: bool
 
   ExpectedToken* = object
     case isExpected*: bool
@@ -50,32 +51,34 @@ proc expect*(self: Parser, kind: TokenKind, expected: string): ExpectedToken =
     expectedToken(tok)
 
 proc parseStmt(self: Parser): Stmt
-proc parseExpr*(self: Parser): Expr
-
-proc parseOr*(self: Parser): Expr
-proc parseAnd*(self: Parser): Expr
-proc parseCmp*(self: Parser): Expr
-proc parseAddSub*(self: Parser): Expr
+proc parseExpr*(self: Parser, prevToken: Token): Expr
 
 proc toStr(self: Parser, typ: Type): string =
   typ.toStr()
 
 proc isType(token: Token): bool =
-  token.kind in {tkInt, tkBool}
+  token.kind in {tkInt, tkBool, tkVoid}
 
 proc parseType(self: Parser): Type =
   let t = self.nextToken()
 
   if   t.kind == tkInt: return newIntType()
   elif t.kind == tkBool: return newBoolType()
+  elif t.kind == tkVoid: return newVoidType()
 
   self.newError(errTypeSyntax, t)
 
-proc parsePrimary(self: Parser): Expr =
+proc parsePrimary(self: Parser, prevToken: Token): Expr =
   let t = self.nextToken()
 
+  # The first primary of an expression statement is the statement root: report
+  # errStatementExpected for it. Any nested primary is an ordinary expression, so the
+  # flag is consumed here (one-shot) to avoid leaking into subexpressions like `x = if`.
+  let stmtContext = self.highLevelExpr
+  self.highLevelExpr = false
+
   if t.kind == tkLParen:
-    result = self.parseExpr()
+    result = self.parseExpr(prevToken)
     discard self.expect(tkRParen, "( ... ) " & self.peekToken().lexeme).ifUnexpected:
       return it.newInvalidExpr()
     return
@@ -90,56 +93,180 @@ proc parsePrimary(self: Parser): Expr =
   elif t.kind == tkInvalid:
     return t.newInvalidExpr()
 
-  self.newError(errNotExpression, t, t.mean())
+  if stmtContext: self.newError(errStatementExpected, t, t.mean())
+  else: self.newError(errExpressionExpected, t, t.mean(), prevToken.lexeme)
   return t.newInvalidExpr()
 
-proc parseUnary(self: Parser): Expr =
-  if self.peekToken().kind in {tkPlus, tkMinus, tkNot}:
-    return self.nextToken().newUnary(self.parseUnary())
-  return self.parsePrimary()
+proc parsePostfix(self: Parser, prevToken: Token): Expr =
+  result = self.parsePrimary(prevToken)
 
-proc parseMulDiv(self: Parser): Expr =
-  result = self.parseUnary()
+  if self.peekToken().kind == tkLParen:
+    let t = self.nextToken()
+    var arguments: seq[Expr] = @[]
+
+    while self.peekToken().kind notin {tkEOF, tkRParen}:
+      arguments.add self.parseExpr(t)
+      if self.peekToken().kind in {tkEOF, tkRParen}:
+        break
+      discard self.expect(tkComma, arguments[^1].toStr() & ", " & self.peekToken().lexeme & "...").ifUnexpected:
+        return it.newInvalidExpr()
+
+    discard self.expect(tkRParen, "( ... ) " & self.peekToken().lexeme).ifUnexpected:
+      return it.newInvalidExpr()
+
+    result = t.newCall(result, arguments)
+
+proc parseUnary(self: Parser, prevToken: Token): Expr =
+  if self.peekToken().kind in {tkPlus, tkMinus, tkNot}:
+    let t = self.nextToken()
+    result = t.newUnary(self.parseUnary(t))
+  return self.parsePostfix(prevToken)
+
+proc parseMulDiv(self: Parser, prevToken: Token): Expr =
+  result = self.parseUnary(prevToken)
 
   while self.peekToken().kind in {tkStar, tkSlash}:
-    result = self.nextToken().newBinary(result, self.parseUnary())
+    let t = self.nextToken()
+    result = t.newBinary(result, self.parseUnary(t))
 
-proc parseAddSub(self: Parser): Expr =
-  result = self.parseMulDiv()
+proc parseAddSub(self: Parser, prevToken: Token): Expr =
+  result = self.parseMulDiv(prevToken)
 
   while self.peekToken().kind in {tkPlus, tkMinus}:
-    result = self.nextToken().newBinary(result, self.parseMulDiv())
+    let t = self.nextToken()
+    result = t.newBinary(result, self.parseMulDiv(t))
 
-proc parseAssignment(self: Parser): Expr =
-  let left = self.parseOr()
+proc parseCmp(self: Parser, prevToken: Token): Expr =
+  result = self.parseAddSub(prevToken)
+
+  while self.peekToken().kind in {tkGt, tkLt, tkGe, tkLe, tkEq, tkNe}:
+    let t = self.nextToken()
+    result = t.newBinary(result, self.parseAddSub(t))
+
+proc parseAnd(self: Parser, prevToken: Token): Expr =
+  result = self.parseCmp(prevToken)
+
+  while self.peekToken().kind == tkAnd:
+    let t = self.nextToken()
+    result = t.newBinary(result, self.parseCmp(t))
+
+proc parseOr(self: Parser, prevToken: Token): Expr =
+  result = self.parseAnd(prevToken)
+
+  while self.peekToken().kind == tkOr:
+    let t = self.nextToken()
+    result = t.newBinary(result, self.parseAnd(t))
+
+proc parseAssignment(self: Parser, prevToken: Token): Expr =
+  let left = self.parseOr(prevToken)
 
   if self.peekToken().kind == tkEquals:
     let t = self.nextToken()
-    let right = self.parseAssignment()
+    let right = self.parseAssignment(t)
     return t.newBinary(left, right)
 
   return left
 
-proc parseOr(self: Parser): Expr =
-  result = self.parseAnd()
+proc parseExpr*(self: Parser, prevToken: Token): Expr =
+  self.parseAssignment(prevToken)
 
-  while self.peekToken().kind == tkOr:
-    result = self.nextToken().newBinary(result, self.parseAnd())
+template exprUnwrap(exprRes: Expr): untyped =
+  let value = exprRes
+  if value.kind == nkInvalid:
+    return value.token.newInvalidStmt()
+  value
 
-proc parseAnd(self: Parser): Expr =
-  result = self.parseCmp()
+proc parseStmts(self: Parser, b: Block) =
+  while self.peekToken().kind notin {tkEOF, tkDedent}:
+    b.stmts.add self.parseStmt()
+    # An indented compound statement (branch/while/func) ends with a block whose dedent
+    # already serves as the separator; an inline one ends with the following EOS.
+    if b.stmts[^1].kind in {nkBranch, nkWhile, nkFuncDecl} and self.peekToken().kind != tkEOS:
+      continue
+    case self.peekToken().kind
+    of tkEOS:
+      discard self.nextToken()
+    of tkEOF, tkDedent:
+      discard
+    of tkIndent:
+      # A statement followed by an unexpected deeper indentation is an indentation error.
+      let t = self.peekToken()
+      self.newError(errIndent, t)
+      break
+    else:
+      let t = self.peekToken()
+      self.newError(errSyntax, t, tkEOS.mean, t.mean,
+        "...; " & self.peekToken().lexeme & "` or `...\\n " & self.peekToken().lexeme)
+      break
 
-  while self.peekToken().kind == tkAnd:
-    result = self.nextToken().newBinary(result, self.parseCmp())
+proc parseBlock(self: Parser): tuple[ok: bool, res: Stmt] =
+  let colon = self.expect(tkColon, "...: " & self.peekToken().lexeme & " ...").ifUnexpected:
+    return (false, it.newInvalidStmt())
 
-proc parseCmp(self: Parser): Expr =
-  result = self.parseAddSub()
+  let b = colon.newBlock(@[])
 
-  while self.peekToken().kind in {tkGt, tkLt, tkGe, tkLe, tkEq, tkNe}:
-    result = self.nextToken().newBinary(result, self.parseAddSub())
+  if self.peekToken().kind != tkIndent:
+    b.stmts.add self.parseStmt()
+    # Inline block ends with an EOS. An inline statement followed by an indented
+    # block is contradictory indentation, so report errIndent; otherwise verify the
+    # EOS is present. Do not consume it: consuming is the parent's (parseStmts)
+    # responsibility.
+    let t = self.peekToken()
+    if t.kind == tkIndent:
+      self.newError(errIndent, t)
+    elif t.kind notin {tkEOS, tkEOF, tkDedent}:
+      self.newError(errSyntax, t, tkEOS.mean, t.mean,
+        "...; " & t.lexeme & "` or `...\\n " & t.lexeme)
+    return (true, b)
 
-proc parseExpr*(self: Parser): Expr =
-  self.parseAssignment()
+  discard self.expect(tkIndent, "...:\\n  " & self.peekToken().lexeme & "...\\n").ifUnexpected:
+    return (false, it.newInvalidStmt())
+
+  self.parseStmts(b)
+
+  discard self.expect(tkDedent, "...:\\n  ...\\n" & self.peekToken().lexeme).ifUnexpected:
+      return (false, it.newInvalidStmt())
+
+  return (true, b)
+
+template blockUnwrap(blockRes: tuple[ok: bool, res: Stmt]): untyped =
+  Block((let (ok, res) = blockRes; if not ok: return res else: res))
+
+proc parseDecl*(self: Parser, typ: Type): Stmt
+
+proc parseFuncDecl*(self: Parser, typ: Type, mut: bool, name: Token): Stmt =
+  discard self.nextToken()
+
+  var arguments: seq[Decl]
+
+  while self.peekToken().kind notin {tkEOF, tkRParen}:
+    let decl = self.parseDecl(self.parseType())
+    if decl.kind != nkDecl:
+      let t = decl.token
+      self.newError(errIllformedArgument, t)
+      return t.newInvalidStmt()
+
+    # TODO: добавить проверку, что аргумент не объявлен публичным, когда публичность
+    #       будет реализована.
+
+    arguments.add(Decl(decl))
+
+    if self.peekToken().kind in {tkEOF, tkRParen}:
+      break
+
+    discard self.expect(tkComma, decl.toStr() & ", " & self.peekToken().lexeme & "...").ifUnexpected:
+      return it.newInvalidStmt()
+
+  discard self.expect(tkRParen, "( ... )").ifUnexpected:
+    return it.newInvalidStmt()
+
+  let body: Block =
+    if self.peekToken().kind == tkColon:
+      self.parseBlock().blockUnwrap()
+    else:
+      nil
+
+  return name.newFuncDecl(typ, mut, arguments, body)
 
 proc parseDecl*(self: Parser, typ: Type): Stmt =
   let mut = if self.peekToken().kind == tkMut: 
@@ -152,60 +279,25 @@ proc parseDecl*(self: Parser, typ: Type): Stmt =
     return it.newInvalidStmt()
   
   var value: Expr = nil
-  if self.peekToken().kind == tkEquals:
-    discard self.nextToken()
-    value = self.parseExpr()
+  let t = self.peekToken()
+  if t.kind == tkEquals:
+    value = self.parseExpr(self.nextToken()).exprUnwrap()
+
+  elif t.kind == tkLParen:
+    return self.parseFuncDecl(typ, mut, name)
 
   return newDecl(name, typ, mut, value)
 
-proc parseBlock(self: Parser): tuple[ok: bool, res: Stmt] =
-  let colon = self.expect(tkColon, "...: " & self.peekToken().lexeme & " ...").ifUnexpected:
-    return (false, it.newInvalidStmt())
-
-  let b = colon.newBlock(@[])
-
-  if self.peekToken().kind != tkIndent:
-    b.stmts.add self.parseStmt()
-    return (true, b)
-
-  discard self.expect(tkIndent, "if ...:\\n  " & self.peekToken().lexeme & "...\\n").ifUnexpected:
-    return (false, it.newInvalidStmt())
-
-  while self.peekToken().kind != tkDedent:
-    b.stmts.add self.parseStmt()
-    if self.peekToken().kind == tkIndent:
-      let t = self.peekToken()
-      self.newError(errIndent, t)
-      return (false, t.newInvalidStmt())
-    if self.peekToken().kind in {tkEOF, tkDedent, tkElif, tkElse}: break
-    
-    discard self.expect(tkEOS, 
-      "...; " & self.peekToken().lexeme & "` or `...\\n " & self.peekToken().lexeme)
-
-    if self.peekToken().kind == tkIndent:
-      let t = self.peekToken()
-      self.newError(errIndent, t)
-      return (false, t.newInvalidStmt())
-    if self.peekToken().kind in {tkEOF, tkDedent, tkElif, tkElse}: break
-
-  discard self.expect(tkDedent, "if ...:\\n  ...\\n" & self.peekToken().lexeme).ifUnexpected:
-    return (false, it.newInvalidStmt())
-
-  return (true, b)
-
-template blockUnwrap(blockRes: tuple[ok: bool, res: Stmt]): untyped =
-  Block((let (ok, res) = blockRes; if not ok: return res else: res))
-
 proc parseBranch*(self: Parser, t: Token): Stmt =
-  let cond = self.parseExpr()
-  let ifThen = self.parseBlock().blockUnwrap()
+  let cond = self.parseExpr(t).exprUnwrap()
 
   var elifs: typeof(Branch.elifs)
   var elseThen: Block
 
+  let ifThen = self.parseBlock().blockUnwrap()
+
   while self.peekToken().kind == tkElif:
-    discard self.nextToken()
-    let cond = self.parseExpr()
+    let cond = self.parseExpr(self.nextToken()).exprUnwrap()
     let elifThen = self.parseBlock().blockUnwrap()
     elifs.addElif(cond, elifThen)
 
@@ -215,23 +307,39 @@ proc parseBranch*(self: Parser, t: Token): Stmt =
 
   return t.newBranch(cond, ifThen, elifs, elseThen)
 
+proc parseWhile*(self: Parser, t: Token): Stmt =
+  let cond = self.parseExpr(t).exprUnwrap()
+  let body = self.parseBlock().blockUnwrap()
+  return t.newWhile(cond, body)
+
+proc parseBreak(self: Parser, t: Token): Stmt =
+  t.newBreak()
+
+proc parseContinue(self: Parser, t: Token): Stmt =
+  t.newContinue()
+
+proc parseReturn(self: Parser, t: Token): Stmt =
+  if self.peekToken().kind == tkEOS:
+    return t.newReturn(nil)
+  let value = self.parseExpr(t).exprUnwrap()
+  return t.newReturn(value)
+
 proc parseStmt(self: Parser): Stmt =
   let t = self.peekToken()
 
   if t.isType(): return self.parseDecl(self.parseType())
   elif t.kind == tkIf: return self.parseBranch(self.nextToken())
+  elif t.kind == tkWhile: return self.parseWhile(self.nextToken())
+  elif t.kind == tkBreak: return self.parseBreak(self.nextToken())
+  elif t.kind == tkContinue: return self.parseContinue(self.nextToken())
+  elif t.kind == tkReturn: return self.parseReturn(self.nextToken())
 
-  let expr = self.parseExpr()
+  self.highLevelExpr = true
+  let expr = self.parseExpr(t)
+  self.highLevelExpr = false
   return expr.token.newExprStmt(expr)
 
 proc parse*(self: Parser): Stmt =
   let blockk: Block = Token().newBlock(@[])
-
-  while self.peekToken().kind != tkEOF:
-    blockk.stmts.add(self.parseStmt())
-    if self.peekToken().kind == tkEOF: break
-    # EOS опционален: после выхода из блока новый стейт идёт сразу (Dedent уже разделитель).
-    if self.peekToken().kind == tkEOS:
-      discard self.nextToken()
-
+  self.parseStmts(blockk)
   return blockk

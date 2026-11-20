@@ -19,6 +19,10 @@ type
     lastWasEos*: bool
     indentStack*: seq[Natural] = @[]
     indentType*: char = '\0'
+    pendingDedents*: int
+
+    eosLine*: Positive = 1
+    eosCol*: Positive = 1
 
 proc peek*(self: Lexer): char =
   if self.pos < self.source.len:
@@ -45,20 +49,21 @@ proc emitDedentsIfNeeded(self: Lexer): bool =
     return true
   return false
 
-proc handleIndentDedent(self: Lexer; spaces: Natural): bool =
+proc handleIndentDedent(self: Lexer; spaces: Natural, indentText = ""): bool =
   if self.indentType == '\0':
     self.indentType = ' '
     self.indentStack.add(0)
 
   if spaces > self.indentStack[^1]:
     self.indentStack.add(spaces)
-    self.peekedToken = newToken(tkIndent, "", self.line, self.col, self.file)
+    self.pendingEos = false
+    let indentCol = max(1, self.col - indentText.len)
+    self.peekedToken = newToken(tkIndent, indentText, self.line, indentCol, self.file)
     return true
   elif spaces < self.indentStack[^1]:
-    while self.indentStack[^1] > spaces and self.indentStack.len > 1:
+    while self.indentStack.len > 1 and self.indentStack[^1] > spaces:
       discard self.indentStack.pop()
-      self.peekedToken = newToken(tkDedent, "", self.line, self.col, self.file)
-      return true
+      self.pendingDedents += 1
     if spaces != self.indentStack[^1]:
       self.errors.add newError(errUnknownCharacter, self.file, self.line, self.col, 1, ' ')
   return false
@@ -69,27 +74,25 @@ proc handleIndentation(self: Lexer): bool =
     of ' ', '\t':
       break
     of '\n', '\r':
-      self.pendingEos = false
       self.advance()
       continue
     of '\0':
-      if self.emitDedentsIfNeeded():
-        self.hasPeekedToken = true
-        self.atLineStart = false
-        return true
+      if self.indentStack.len > 1:
+        self.pendingDedents += self.indentStack.len - 1
+        self.indentStack.setLen(1)
       self.atLineStart = false
       return false
     else:
-      # Токен на колонке 0 (например `elif`/`else`): сбросить отступ до уровня 0.
       self.atLineStart = false
       if self.handleIndentDedent(0):
-        self.pendingEos = false
         self.hasPeekedToken = true
         return true
       return false
 
   var spaces = 0
+  var indentText = ""
   while self.peek() == ' ' or self.peek() == '\t':
+    indentText.add self.peek()
     if self.indentType == '\0':
       self.indentType = self.peek()
       self.indentStack.add(0)
@@ -100,8 +103,14 @@ proc handleIndentation(self: Lexer): bool =
     self.advance()
 
   self.atLineStart = false
-  if self.handleIndentDedent(spaces):
-    self.pendingEos = false
+  # A whitespace-only blank line must be ignored, like an empty line, instead of
+  # being treated as a new indentation level. Its trailing newline keeps any pending
+  # EOS from the previous content line.
+  if self.peek() in {'\n', '\r', '\0'}:
+    while self.peek() in {'\n', '\r'}:
+      self.advance()
+    return self.handleIndentation()
+  if self.handleIndentDedent(spaces, indentText):
     self.hasPeekedToken = true
     return true
   return false
@@ -119,26 +128,36 @@ proc nextTok*(self: Lexer): Token =
       return
     self.atLineStart = false
 
-  self.skipHorizontalWhitespaces()
-
   if self.pendingEos:
     self.pendingEos = false
-    result = newToken(tkEOS, ";", self.line, self.col, self.file)
-  else:
+    result = newToken(tkEOS, ";", self.eosLine, self.eosCol, self.file)
+    if self.lastWasEos:
+      result = self.nextTok()
+    else:
+      self.lastWasEos = true
+    return
+
+  if self.pendingDedents > 0:
+    self.pendingDedents -= 1
+    result = newToken(tkDedent, "", self.line, self.col, self.file)
+    self.lastWasEos = false
+    return
+
+  self.skipHorizontalWhitespaces()
+
+  block:
     let line = self.line
     let col = self.col
     let c = self.peek()
 
     if c == '\n':
+      self.eosLine = self.line
+      self.eosCol = self.col
       self.advance()
       self.atLineStart = true
       self.pendingEos = true
-      if self.handleIndentation():
-        result = self.peekedToken
-        self.hasPeekedToken = false
-      elif self.pendingEos:
-        self.pendingEos = false
-        result = newToken(tkEOS, ";", self.line, self.col, self.file)
+      result = self.nextTok()
+      return
 
     elif c == '\0':
       if self.emitDedentsIfNeeded():
@@ -189,8 +208,8 @@ proc nextTok*(self: Lexer): Token =
   else:
     self.lastWasEos = false
 
-proc newLexer*(source: string, errors: ErrorContext): Lexer =
-  result = Lexer(source: source, errors: errors)
+proc newLexer*(source: string, errors: ErrorContext, file: Natural): Lexer =
+  result = Lexer(source: source, errors: errors, file: file)
 
 proc peekTok*(self: Lexer): Token =
   self.peekedToken = self.nextTok()
