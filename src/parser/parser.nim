@@ -120,7 +120,8 @@ proc parseUnary(self: Parser, prevToken: Token): Expr =
   if self.peekToken().kind in {tkPlus, tkMinus, tkNot}:
     let t = self.nextToken()
     result = t.newUnary(self.parseUnary(t))
-  return self.parsePostfix(prevToken)
+  else:
+    result = self.parsePostfix(prevToken)
 
 proc parseMulDiv(self: Parser, prevToken: Token): Expr =
   result = self.parseUnary(prevToken)

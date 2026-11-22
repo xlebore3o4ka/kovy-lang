@@ -65,11 +65,13 @@ type
     mut*: bool
     arguments*: seq[Decl]
     body*: Block
+    overloadId*: int  # 0 = not assigned yet
   Return* = ref object of Stmt
     value*: Expr
   Call* = ref object of Expr
     value*: Expr
     arguments*: seq[Expr]
+    resolvedOverloadId*: int  # 0 = resolved without an overload set
 
 proc newInvalidStmt*(token: Token): Stmt =
   InvalidStmt(kind: nkInvalid, token: token)

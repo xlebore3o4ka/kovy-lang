@@ -6,6 +6,7 @@ type
   Nimgen* = ref object
     indentLevel*: Natural = 0
     blockMarker*: string = ":"
+    tmpCounter: Natural = 0
 
 proc newNimgen*(): Nimgen =
   Nimgen()
@@ -30,10 +31,30 @@ const nimKeywords = [
   "using", "var", "when", "while", "xor", "yield"
 ]
 
+proc encChar(c: char): string =
+  case c
+  of '_': "zu"
+  of 'z': "zz"
+  else:
+    if c.isDigit:        "z" & c
+    elif c.isUpperAscii: "zc" & toLowerAscii(c)
+    else:                $c
+
+proc encodeIdent(sym: string): string =
+  var enc = ""
+  for c in sym:
+    enc.add encChar(c)
+  enc
+
 proc normSym(sym: string): string =
-  result = sym.replace("_", "U")
-  if result in nimKeywords and result[0].isUpperAscii:
-    result = "`" & result & "`"
+  let enc = encodeIdent(sym)
+  if enc in nimKeywords:
+    result = "`" & enc & "`"
+  else:
+    result = enc
+
+proc mangleFuncName(sym: string, overloadId: int): string =
+  encodeIdent(sym) & "za" & $overloadId
 
 proc pushScope(self: Nimgen) =
   self.indentLevel += 1
@@ -51,7 +72,11 @@ proc visit*(self: Nimgen, node: Symbol): string =
   emit normSym(node.token.lexeme)
 
 proc visit*(self: Nimgen, node: Call): string =
-  emit self.visit(node.value)
+  if node.resolvedOverloadId > 0 and node.value.kind == nkSymbol:
+    emit mangleFuncName(Symbol(node.value).token.lexeme,
+      node.resolvedOverloadId)
+  else:
+    emit self.visit(node.value)
   emit "("
   var args: seq[string]
   for arg in node.arguments:
@@ -72,20 +97,41 @@ proc nimOp(k: Token): string =
   else: k.lexeme
 
 proc getReturnedLValue(self: Nimgen, expr: Expr): string =
-  if expr.kind == nkBinary: return self.getReturnedLValue(Binary(expr).lvalue)
-  return self.visit(expr)
+  case expr.kind
+  of nkBinary: return self.getReturnedLValue(Binary(expr).lvalue)
+  of nkCall:   return self.visit(expr)
+  else:        return self.visit(expr)
+
+proc newTmp(self: Nimgen): string =
+  result = "`kovy tmp " & $self.tmpCounter & "`"
+  inc self.tmpCounter
 
 proc visit*(self: Nimgen, node: Binary): string =
   let op = nimOp(node.token)
   if op == "=":
-    emit "(", self.parenIfBin(node.lvalue), " ", op, " ",
-         self.parenIfBin(node.rvalue), "; ",
-         self.getReturnedLValue(node.lvalue), ")"
+    if node.lvalue.kind == nkCall:
+      let tmp = self.newTmp()
+      emit "(block:\n"
+      self.pushScope()
+      let pad = "  ".repeat(self.indentLevel)
+      emit pad, "let ", tmp, " = addr ", self.visit(node.lvalue), "\n"
+      emit pad, tmp, "[] = ", self.visit(node.rvalue), "\n"
+      emit pad, tmp, "[]"
+      self.popScope()
+      emit ")"
+    else:
+      emit "(", self.parenIfBin(node.lvalue), " ", op, " ",
+           self.parenIfBin(node.rvalue), "; ",
+           self.getReturnedLValue(node.lvalue), ")"
   else:
     emit self.parenIfBin(node.lvalue), " ", op, " ", self.parenIfBin(node.rvalue)
 
 proc visit*(self: Nimgen, node: Unary): string =
-  emit node.token.nimOp(), self.parenIfBin(node.value)
+  emit node.token.nimOp()
+  if node.value.kind in {nkUnary, nkBinary}:
+    emit "(", self.visit(node.value), ")"
+  else:
+    emit self.visit(node.value)
 
 template indent(self: Nimgen): string =
   "  ".repeat(self.indentLevel)
@@ -139,11 +185,14 @@ proc visit*(self: Nimgen, node: Continue): string =
   emit "continue"
 
 proc visit*(self: Nimgen, node: FuncDecl): string =
-  emit "proc ", normSym(node.token.lexeme), "("
+  let name =
+    if node.overloadId > 0: mangleFuncName(node.token.lexeme, node.overloadId)
+    else: normSym(node.token.lexeme)
+  emit "proc ", name, "("
 
   var args: seq[string]
   for decl in node.arguments:
-    args.add decl.token.lexeme & (if decl.mut: ": var " else: ": ") & nimType(decl.typ)
+    args.add normSym(decl.token.lexeme) & (if decl.mut: ": var " else: ": ") & nimType(decl.typ)
 
   emit args.join(", "), ")" & (if node.mut: ": var " else: ": ") & nimType(node.returnType)
 

@@ -1,6 +1,6 @@
 import ../[ast, types, errors]
 import ../parser/tokens
-import std/[tables]
+import std/[tables, strutils]
 
 type
   Sym = object
@@ -8,10 +8,15 @@ type
     symbolType: Type
     scopeDepth: Natural
 
+  Overload = ref object
+    signature: Type
+    decl: FuncDecl
+    defined: bool
+    overloadId: int
+
   Scope = ref object
     depth: Natural
     symbolTable: Table[string, Sym]
-    overloadTable: Table[string, seq[FuncDecl]]
     case isGlobal: bool
     of false: parent: Scope
     of true: discard
@@ -26,18 +31,26 @@ type
     case kind*: ContextScopeKind
     of cskFunc:
       funcReturnType*: Type
+      funcArgsDepth*: Natural
     else: discard
 
   Sema* = ref object
     errors*: ErrorContext
+    files: FileTracker
 
     currentScope: Scope
     symbolScopeStack: Table[string, seq[Scope]]
     contextScopeStack: seq[ContextScope]
+    overloadTable: Table[string, seq[Overload]]
+    forwardOrder: seq[Overload]
+    nextOverloadId: int
 
-proc newSema*(errors: ErrorContext): Sema =
+proc newSema*(errors: ErrorContext, files: FileTracker = nil): Sema =
   Sema(errors: errors,
-       currentScope: Scope(isGlobal: true, symbolTable: initTable[string, Sym](), depth: 0))
+       files: files,
+       currentScope: Scope(isGlobal: true, symbolTable: initTable[string, Sym](), depth: 0),
+       overloadTable: initTable[string, seq[Overload]](),
+       nextOverloadId: 1)
 
 proc visit*(self: Sema, node: Expr): Type
 proc visit*(self: Sema, node: Stmt): bool
@@ -85,6 +98,15 @@ proc getSymbol(self: Sema, name: string): Sym =
   let scope = self.symbolScopeStack[name][^1]
   result = scope.symbolTable[name]
 
+proc getGlobalOverloads(self: Sema, name: string): seq[Overload] =
+  # Only globally declared functions participate in overloading. A local
+  # variable or nested function with the same name must keep the old Sym path.
+  if name in self.overloadTable and self.symbolExists(name):
+    let innermost = self.symbolScopeStack[name][^1]
+    if innermost.isGlobal and self.getSymbol(name).symbolType.kind == typeFunc:
+      return self.overloadTable[name]
+  return @[]
+
 proc suggestName(self: Sema, name: string): string =
   return "<not-implemented-yet>"
 
@@ -104,7 +126,33 @@ proc fits(self: Sema, typ: Type, expectedType: Type): bool =
     return true
   if typ.kind == typeMutable:
     return self.fits(typ.args[0], expectedType)
+  if expectedType.kind == typeMutable:
+    return self.fits(typ, expectedType.args[0])
   expectedType.kind in fitSets.getOrDefault(typ.kind, {})
+
+proc conversionCost(self: Sema, typ: Type, expectedType: Type): int =
+  # -1 means "does not fit", 0 is an exact match, positive values are
+  # conversions. This is call-site specific: unlike `fits`, it distinguishes a
+  # mutable argument passed to a mut parameter from one passed by value.
+  if typ.kind == typeError or expectedType.kind == typeError:
+    return 0
+
+  if expectedType.kind == typeMutable:
+    if typ.kind != typeMutable:
+      return -1
+    return self.conversionCost(typ.args[0], expectedType.args[0])
+
+  if typ.kind == typeMutable:
+    let innerCost = self.conversionCost(typ.args[0], expectedType)
+    if innerCost < 0:
+      return -1
+    return 1 + innerCost
+
+  if sameType(typ, expectedType):
+    return 0
+  if self.fits(typ, expectedType):
+    return 1
+  return -1
 
 const unOpResult: Table[TokenKind, Table[TypeKind, TypeKind]] = {
   tkPlus:  {typeNumberLit: typeInt, typeInt: typeInt}.toTable,
@@ -208,6 +256,54 @@ proc newError(self: Sema, node: Node, kind: ErrorKind, placeholders: varargs[str
   let t = node.token
   self.errors.add errors.newError(kind, t.file, t.line, t.col, t.lexeme.len, @placeholders)
 
+proc sameParams(a, b: Type): bool =
+  if a.kind != typeFunc or b.kind != typeFunc:
+    return false
+  if a.funcArgTypes.len != b.funcArgTypes.len:
+    return false
+  for i in 0 ..< a.funcArgTypes.len:
+    if not sameType(a.funcArgTypes[i], b.funcArgTypes[i]):
+      return false
+  return true
+
+proc findOverload(overloads: seq[Overload], funcType: Type): int =
+  for i, overload in overloads:
+    if sameParams(overload.signature, funcType):
+      return i
+  return -1
+
+proc overloadListLine(self: Sema, overload: Overload): string =
+  let decl = overload.decl
+  var args: seq[string]
+  for arg in decl.arguments:
+    args.add((if arg.mut: "mut " else: "") & arg.typ.toStr)
+  let file =
+    if self.files != nil: self.files.uninternFile(decl.token.file)
+    else: $decl.token.file
+  file & " " & $decl.token.line & " - " &
+    (if decl.mut: "mut " else: "") & decl.returnType.toStr & " " &
+    decl.token.lexeme & "(" & args.join(", ") & ")"
+
+proc overloadList(self: Sema, overloads: seq[Overload]): string =
+  var lines: seq[string]
+  for overload in overloads:
+    lines.add self.overloadListLine(overload)
+  lines.join("\n  ")
+
+proc rejectNonFunctionName(self: Sema, node: Node, name: string): bool =
+  if self.symbolExists(name):
+    let sym = self.getSymbol(name)
+    if sym.symbolType.kind != typeFunc:
+      self.newError(node, errRedeclaration, name, sym.token.file, sym.token.line)
+      return true
+  return false
+
+proc diagnosticTypeStr(typ: Type): string =
+  if typ.kind == typeMutable:
+    "mut " & diagnosticTypeStr(typ.args[0])
+  else:
+    typ.toStr
+
 proc visit*(self: Sema, node: Number): Type =
   return newNumberLitType()
 
@@ -253,7 +349,67 @@ proc visit*(self: Sema, node: Unary): Type =
     return newErrorType()
   return typeOfKind(res)
 
+proc resolveOverloadCall(self: Sema, node: Call,
+    overloads: seq[Overload]): Type =
+  var argTypes: seq[Type]
+  for a in node.arguments:
+    let t = self.visit(a)
+    if t.kind == typeError:
+      return newErrorType()
+    argTypes.add t
+
+  var candidates: seq[Overload]
+  var bestCost = high(int)
+  for overload in overloads:
+    let signature = overload.signature
+    if argTypes.len != signature.funcArgTypes.len:
+      continue
+
+    var totalCost = 0
+    var matched = true
+    for i in 0 ..< argTypes.len:
+      let cost = self.conversionCost(argTypes[i], signature.funcArgTypes[i])
+      if cost < 0:
+        matched = false
+        break
+      totalCost += cost
+
+    if not matched:
+      continue
+
+    if totalCost < bestCost:
+      bestCost = totalCost
+      candidates = @[overload]
+    elif totalCost == bestCost:
+      candidates.add overload
+
+  var argsStr = ""
+  for i, typ in argTypes:
+    if i > 0:
+      argsStr.add ", "
+    argsStr.add diagnosticTypeStr(typ)
+
+  let name = Symbol(node.value).token.lexeme
+
+  if candidates.len == 1:
+    node.resolvedOverloadId = candidates[0].overloadId
+    return candidates[0].signature.funcReturnType[]
+  elif candidates.len > 1:
+    self.newError(node, errAmbiguousCall, name, argsStr,
+      self.overloadList(candidates))
+    return newErrorType()
+  else:
+    self.newError(node, errNoMatchingOverload, name, argsStr,
+      self.overloadList(overloads))
+    return newErrorType()
+
 proc visit*(self: Sema, node: Call): Type =
+  var overloads: seq[Overload]
+  if node.value.kind == nkSymbol:
+    overloads = self.getGlobalOverloads(Symbol(node.value).token.lexeme)
+    if overloads.len > 1:
+      return self.resolveOverloadCall(node, overloads)
+
   let callee = self.visit(node.value)
   self.handleErrorType(callee)
 
@@ -272,11 +428,15 @@ proc visit*(self: Sema, node: Call): Type =
     return newErrorType()
 
   for i in 0 ..< callee.funcArgTypes.len:
-    if not self.fits(argTypes[i], callee.funcArgTypes[i]):
+    if self.conversionCost(argTypes[i], callee.funcArgTypes[i]) < 0:
       let arg = node.arguments[i]
-      self.newError(arg, errArgMismatch, arg.toStr, argTypes[i].toStr,
-                   callee.funcArgTypes[i].toStr)
+      self.newError(arg, errArgMismatch, arg.toStr,
+                   diagnosticTypeStr(argTypes[i]),
+                   diagnosticTypeStr(callee.funcArgTypes[i]))
       return newErrorType()
+
+  if overloads.len == 1:
+    node.resolvedOverloadId = overloads[0].overloadId
 
   return callee.funcReturnType[]
 
@@ -317,7 +477,7 @@ proc visit*(self: Sema, node: Decl): bool =
       successfulness = false
 
     if not self.fits(typ, expectedType):
-      self.newError(node, errDoesNotFit, typ.toStr, expectedType.toStr)
+      self.newError(node.value, errDoesNotFit, typ.toStr, expectedType.toStr)
       successfulness = false
 
   if self.symbolExistsInScope(name):
@@ -413,25 +573,135 @@ proc controlAllReturnPaths(self: Sema, node: Stmt): bool =
   else:
     return false
 
+proc sameParamNames(a, b: FuncDecl): bool =
+  # Nim resolves a forward declaration and its definition as one proc only when
+  # the parameter names match; otherwise they become two overloads.
+  if a.arguments.len != b.arguments.len:
+    return false
+  for i in 0 ..< a.arguments.len:
+    if a.arguments[i].token.lexeme != b.arguments[i].token.lexeme:
+      return false
+  return true
+
+proc signatureStr(decl: FuncDecl): string =
+  var args: seq[string]
+  for arg in decl.arguments:
+    args.add((if arg.mut: "mut " else: "") & arg.typ.toStr & " " &
+      arg.token.lexeme)
+  (if decl.mut: "mut " else: "") & decl.returnType.toStr & " " &
+    decl.token.lexeme & "(" & args.join(", ") & ")"
+
 proc visit*(self: Sema, node: FuncDecl): bool =
   var argTypes: seq[Type]
 
   for decl in node.arguments:
-    argTypes.add(decl.typ)
+    argTypes.add(if decl.mut: newMutableType(decl.typ) else: decl.typ)
 
   let returnType =
     if node.mut: newMutableType(node.returnType)
     else: node.returnType
 
   let funcType = newFuncType(returnType, argTypes)
+  let name = node.token.lexeme
 
   result = true
 
-  if self.symbolExists(node.token.lexeme):
-    raise newException(Exception, "Function overloading has not implemented yet")  # TODO
-  elif node.body == nil:
-    raise newException(Exception, "Function forward declaration not implemented yet")  # TODO
+  if node.body == nil and not self.currentScope.isGlobal:
+    self.newError(node, errForwardOutsideGlobal, name)
+    return false
+
+  if self.currentScope.isGlobal:
+    if self.rejectNonFunctionName(node, name):
+      return false
+
+    let existing = self.overloadTable.getOrDefault(name, @[])
+    let index = findOverload(existing, funcType)
+
+    if node.body == nil:
+      if index >= 0:
+        let overload = existing[index]
+        if sameType(overload.signature.funcReturnType[],
+            funcType.funcReturnType[]):
+          self.newError(node, errFuncRedefinition, name)
+        else:
+          self.newError(node, errOverloadByReturnType, name,
+            signatureStr(overload.decl), signatureStr(node))
+        return false
+
+      if existing.len == 0 and self.symbolExists(name):
+        self.newError(node, errFuncRedefinition, name)
+        return false
+
+      let overload = Overload(signature: funcType, decl: node, defined: false,
+        overloadId: self.nextOverloadId)
+      inc self.nextOverloadId
+
+      node.overloadId = overload.overloadId
+      if existing.len == 0:
+        self.newSymbol(node.token, funcType)
+      self.overloadTable.mgetOrPut(name, @[]).add overload
+      self.forwardOrder.add overload
+
+      # Parameters of a forward declaration still have to be validated (default
+      # values in particular), even though their scope is discarded immediately.
+      self.pushScope(ContextScope(kind: cskFuncArguments))
+      for decl in node.arguments:
+        if not self.visit(decl):
+          result = false
+      self.popScope()
+      return result
+
+    if index >= 0:
+      let overload = existing[index]
+
+      if overload.defined:
+        if sameType(overload.signature.funcReturnType[],
+            funcType.funcReturnType[]):
+          self.newError(node, errFuncRedefinition, name)
+        else:
+          self.newError(node, errOverloadByReturnType, name,
+            signatureStr(overload.decl), signatureStr(node))
+        return false
+
+      if not sameType(overload.signature, funcType) or
+          not sameParamNames(overload.decl, node):
+        self.newError(node, errFuncSignatureMismatch, name,
+          signatureStr(overload.decl), signatureStr(node))
+        # A definition was found, it just does not match; do not report the same
+        # forward again as unresolved during finalize.
+        overload.defined = true
+        return false
+
+      overload.defined = true
+      overload.decl = node
+      node.overloadId = overload.overloadId
+
+      # The symbol was already registered by the forward declaration; re-adding
+      # it would push the scope twice into symbolScopeStack.
+      var sym = self.currentScope.symbolTable[name]
+      sym.token = node.token
+      self.currentScope.symbolTable[name] = sym
+    else:
+      if existing.len == 0 and self.symbolExists(name):
+        self.newError(node, errFuncRedefinition, name)
+        return false
+
+      let overload = Overload(signature: funcType, decl: node, defined: true,
+        overloadId: self.nextOverloadId)
+      inc self.nextOverloadId
+
+      node.overloadId = overload.overloadId
+      if existing.len == 0:
+        self.newSymbol(node.token, funcType)
+      self.overloadTable.mgetOrPut(name, @[]).add overload
   else:
+    # Nested functions are allowed but cannot be overloaded.
+    if self.rejectNonFunctionName(node, name):
+      return false
+    if self.symbolExists(name):
+      self.newError(node, errFuncRedefinition, name)
+      return false
+
     self.newSymbol(node.token, funcType)
 
   self.pushScope(ContextScope(kind: cskFuncArguments))
@@ -443,7 +713,9 @@ proc visit*(self: Sema, node: FuncDecl): bool =
   if not result:
     return false
 
-  self.pushScope(ContextScope(kind: cskFunc, funcReturnType: returnType))
+  let funcArgsDepth = self.currentScope.depth
+  self.pushScope(ContextScope(kind: cskFunc, funcReturnType: returnType,
+    funcArgsDepth: funcArgsDepth))
 
   if not self.visit(node.body):
     result = false
@@ -455,6 +727,12 @@ proc visit*(self: Sema, node: FuncDecl): bool =
       not self.controlAllReturnPaths(node.body):
     self.newError(node, errNotAllPathsReturn)
     result = false
+
+proc finalize*(self: Sema) =
+  for overload in self.forwardOrder:
+    if not overload.defined:
+      self.newError(overload.decl, errUnresolvedForward,
+        overload.decl.token.lexeme)
 
 proc getMutabilitySource(self: Sema, node: Expr): Sym =
   case node.kind
@@ -488,10 +766,10 @@ proc visit*(self: Sema, node: Return): bool =
       self.newError(node, errDoesNotFit, t.toStr, context.funcReturnType.toStr)
       return false
 
-    if t.kind == typeMutable:
+    if t.kind == typeMutable and context.funcReturnType.kind == typeMutable:
       let s = self.getMutabilitySource(node.value)
 
-      if s.scopeDepth >= self.currentScope.depth:
+      if s.scopeDepth > context.funcArgsDepth:
         self.newError(node, errReturnDanglingMutable, s.token.lexeme,
           s.token.file, s.token.line)
         return false

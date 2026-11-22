@@ -98,5 +98,33 @@
   "errUnreachableCode": {
     "message": "Unreachable code from line @0 to line @1",
     "addinfo": ""
+  },
+  "errForwardOutsideGlobal": {
+    "message": "Forward declaration of @q0 is only allowed at global scope",
+    "addinfo": ""
+  },
+  "errFuncSignatureMismatch": {
+    "message": "Definition of @q0 does not match its forward declaration",
+    "addinfo": "Forward: @c1\n  Definition: @c2"
+  },
+  "errFuncRedefinition": {
+    "message": "Function @q0 is already declared",
+    "addinfo": ""
+  },
+  "errUnresolvedForward": {
+    "message": "Forward-declared function @q0 has no definition",
+    "addinfo": ""
+  },
+  "errOverloadByReturnType": {
+    "message": "Cannot overload @q0 by return type only",
+    "addinfo": "First: @c1\n  Second: @c2"
+  },
+  "errAmbiguousCall": {
+    "message": "Ambiguous call to @q0 with arguments (@1)",
+    "addinfo": "@2"
+  },
+  "errNoMatchingOverload": {
+    "message": "No overload of @q0 matches arguments (@1)",
+    "addinfo": "@2"
   }
 }

@@ -23,6 +23,10 @@ type
     errNotAllPathsReturn
     errUnreachableCode
 
+    errForwardOutsideGlobal, errFuncSignatureMismatch
+    errFuncRedefinition, errUnresolvedForward
+    errOverloadByReturnType, errAmbiguousCall, errNoMatchingOverload
+
   Error* = object
     kind*: ErrorKind
     placeholders*: seq[string]

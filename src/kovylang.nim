@@ -4,15 +4,13 @@ import visitors/[sema, nimgen]
 import std/[os]
 
 let source = """
-int a(bool b):
-  if b:
-    this()
-    code()
-    has()
-    no()
-    return_()
-  else:
-    return 1
+int a(int a):
+  return a
+
+int a(int mut a):
+  return a
+
+int b = a(10)
 """
 
 let errCtx = newErrorContext(currentSourcePath().parentDir() / "error_locales" / "en.json")
@@ -31,8 +29,9 @@ block process:
     if errCtx.hasErrors():
       break successfulness
 
-    let semantics = newSema(errCtx)
+    let semantics = newSema(errCtx, fileTracker)
     discard semantics.visit(codeAst)
+    semantics.finalize()
     
     if errCtx.hasErrors():
       break successfulness

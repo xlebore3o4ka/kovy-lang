@@ -59,6 +59,28 @@ proc toStr*(typ: Type): string =
   else:
     typ.name & "[" & typ.args.mapIt(it.toStr).join(", ") & "]"
 
+proc sameType*(a, b: Type): bool =
+  if a.kind != b.kind:
+    return false
+  case a.kind
+  of typeFunc:
+    if a.funcArgTypes.len != b.funcArgTypes.len:
+      return false
+    if not sameType(a.funcReturnType[], b.funcReturnType[]):
+      return false
+    for i in 0 ..< a.funcArgTypes.len:
+      if not sameType(a.funcArgTypes[i], b.funcArgTypes[i]):
+        return false
+  else:
+    if a.name != b.name:
+      return false
+  if a.args.len != b.args.len:
+    return false
+  for i in 0 ..< a.args.len:
+    if not sameType(a.args[i], b.args[i]):
+      return false
+  return true
+
 proc hash*(typ: Type): Hash =
   result = hash(ord(typ.kind))
   case typ.kind
