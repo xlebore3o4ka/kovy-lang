@@ -1,5 +1,24 @@
-import std/[hashes, unittest]
+import std/[hashes, os, unittest]
+import parser/[lexer, parser]
+import errors
+import ast
 import types
+
+const localePath =
+  currentSourcePath().parentDir() / ".." / "src" / "error_locales" / "en.json"
+
+proc parseTypeString(typeSource: string): Type =
+  let source = typeSource & " value"
+  let ctx = newErrorContext(localePath)
+  let files = FileTracker()
+  let lexer = newLexer(source, ctx, files.newFile("<test>", source))
+  let parser = newParser(lexer, ctx)
+  let tree = parser.parse()
+  check ctx.errors.len == 0
+  check tree.kind == nkBlock
+  check Block(tree).stmts.len == 1
+  check Block(tree).stmts[0].kind == nkDecl
+  result = Decl(Block(tree).stmts[0]).typ
 
 suite "types":
   test "primitive type names":
@@ -58,3 +77,31 @@ suite "types":
       hash(newMutableType(newIntType()))
     check hash(newFuncType(newIntType(), @[newBoolType()])) ==
       hash(newFuncType(newIntType(), @[newBoolType()]))
+
+suite "function type syntax":
+  test "function type without parameters":
+    let typ = parseTypeString("void()")
+    check typ.kind == typeFunc
+    check typ.funcReturnType[].toStr == "void"
+    check typ.funcArgTypes.len == 0
+    check typ.toStr == "void()"
+
+  test "function type with mutable and immutable parameters":
+    let typ = parseTypeString("int(mut int, int)")
+    check typ.kind == typeFunc
+    check typ.funcReturnType[].toStr == "int"
+    check typ.funcArgTypes.len == 2
+    check typ.funcArgTypes[0].kind == typeMutable
+    check typ.funcArgTypes[0].args[0].toStr == "int"
+    check typ.funcArgTypes[1].toStr == "int"
+    check typ.toStr == "int(mut int, int)"
+
+  test "nested function types":
+    let typ = parseTypeString("int(int(bool), mut void())")
+    check typ.kind == typeFunc
+    check typ.funcArgTypes.len == 2
+    check typ.funcArgTypes[0].kind == typeFunc
+    check typ.funcArgTypes[0].toStr == "int(bool)"
+    check typ.funcArgTypes[1].kind == typeMutable
+    check typ.funcArgTypes[1].args[0].toStr == "void()"
+    check typ.toStr == "int(int(bool), mut void())"

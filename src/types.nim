@@ -52,7 +52,13 @@ proc toStr*(typ: Type): string =
     var s = typ.funcReturnType[].toStr
     if typ.args.len > 0:
       s &= "[" & typ.args.mapIt(it.toStr).join(", ") & "]"
-    s &= "(" & typ.funcArgTypes.mapIt(it.toStr).join(", ") & ")"
+    var args: seq[string]
+    for arg in typ.funcArgTypes:
+      if arg.kind == typeMutable:
+        args.add "mut " & arg.args[0].toStr
+      else:
+        args.add arg.toStr
+    s &= "(" & args.join(", ") & ")"
     s
   elif typ.args.len == 0:
     typ.name

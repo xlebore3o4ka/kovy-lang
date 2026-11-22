@@ -62,11 +62,43 @@ proc isType(token: Token): bool =
 proc parseType(self: Parser): Type =
   let t = self.nextToken()
 
-  if   t.kind == tkInt: return newIntType()
-  elif t.kind == tkBool: return newBoolType()
-  elif t.kind == tkVoid: return newVoidType()
+  if   t.kind == tkInt: result = newIntType()
+  elif t.kind == tkBool: result = newBoolType()
+  elif t.kind == tkVoid: result = newVoidType()
+  else:
+    self.newError(errTypeSyntax, t)
+    return newErrorType()
 
-  self.newError(errTypeSyntax, t)
+  # A type followed by a parenthesized type list is a function type:
+  # `int(mut int, bool)`.
+  if self.peekToken().kind != tkLParen:
+    return
+
+  discard self.nextToken()
+
+  var argTypes: seq[Type]
+  while self.peekToken().kind notin {tkEOF, tkRParen}:
+    let argMut = self.peekToken().kind == tkMut
+    if argMut:
+      discard self.nextToken()
+
+    let argType = self.parseType()
+    if argType.kind == typeError:
+      return newErrorType()
+
+    argTypes.add(if argMut: newMutableType(argType) else: argType)
+
+    if self.peekToken().kind in {tkEOF, tkRParen}:
+      break
+
+    discard self.expect(tkComma,
+      "type, " & self.peekToken().lexeme & "...").ifUnexpected:
+      return newErrorType()
+
+  discard self.expect(tkRParen, "( ... )").ifUnexpected:
+    return newErrorType()
+
+  return newFuncType(result, argTypes)
 
 proc parsePrimary(self: Parser, prevToken: Token): Expr =
   let t = self.nextToken()
