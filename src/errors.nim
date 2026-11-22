@@ -26,6 +26,7 @@ type
     errForwardOutsideGlobal, errFuncSignatureMismatch
     errFuncRedefinition, errUnresolvedForward
     errOverloadByReturnType, errAmbiguousCall, errNoMatchingOverload
+    errDefaultForbidden
 
   Error* = object
     kind*: ErrorKind

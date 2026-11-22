@@ -126,5 +126,9 @@
   "errNoMatchingOverload": {
     "message": "No overload of @q0 matches arguments (@1)",
     "addinfo": "@2"
+  },
+  "errDefaultForbidden": {
+    "message": "Parameter @q0 cannot have a default value",
+    "addinfo": "Default parameter values are not supported"
   }
 }

@@ -595,6 +595,12 @@ proc visit*(self: Sema, node: FuncDecl): bool =
   var argTypes: seq[Type]
 
   for decl in node.arguments:
+    if decl.value != nil:
+      self.newError(decl, errDefaultForbidden, decl.token.lexeme)
+      # Defaults are forbidden, so treat the parameter as required from here on.
+      # This also keeps the rest of the pipeline free of cascading errors and
+      # prevents default values from leaking into codegen.
+      decl.value = nil
     argTypes.add(if decl.mut: newMutableType(decl.typ) else: decl.typ)
 
   let returnType =
