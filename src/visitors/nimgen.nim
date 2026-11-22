@@ -69,7 +69,10 @@ proc visit*(self: Nimgen, node: Bool): string =
   emit node.value
 
 proc visit*(self: Nimgen, node: Symbol): string =
-  emit normSym(node.token.lexeme)
+  if node.resolvedOverloadId > 0:
+    emit mangleFuncName(node.token.lexeme, node.resolvedOverloadId)
+  else:
+    emit normSym(node.token.lexeme)
 
 proc visit*(self: Nimgen, node: Call): string =
   if node.resolvedOverloadId > 0 and node.value.kind == nkSymbol:
@@ -160,7 +163,21 @@ proc visit*(self: Nimgen, node: ExprStmt): string =
     emit "discard ", self.visit(node.expr)
 
 proc nimType(typ: Type): string =
-  return typ.toStr()
+  case typ.kind
+  of typeFunc:
+    var args: seq[string]
+    for i, arg in typ.funcArgTypes:
+      let argName = "a" & $i
+      if arg.kind == typeMutable:
+        args.add argName & ": var " & nimType(arg.args[0])
+      else:
+        args.add argName & ": " & nimType(arg)
+    return "proc (" & args.join(", ") & "): " &
+      nimType(typ.funcReturnType[])
+  of typeMutable:
+    return "var " & nimType(typ.args[0])
+  else:
+    return typ.toStr()
 
 proc visit*(self: Nimgen, node: Decl): string =
   let typ = node.typ.nimType()

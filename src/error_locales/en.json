@@ -127,6 +127,10 @@
     "message": "No overload of @q0 matches arguments (@1)",
     "addinfo": "@2"
   },
+  "errAmbiguousFunctionReference": {
+    "message": "Ambiguous reference to function @q0",
+    "addinfo": "Use it in a context with an expected function type"
+  },
   "errEmptyFunctionBody": {
     "message": "Function body cannot be empty",
     "addinfo": "A function must contain at least one statement"

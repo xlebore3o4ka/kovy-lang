@@ -129,6 +129,8 @@ proc fits(self: Sema, typ: Type, expectedType: Type): bool =
     return self.fits(typ.args[0], expectedType)
   if expectedType.kind == typeMutable:
     return self.fits(typ, expectedType.args[0])
+  if typ.kind == typeFunc or expectedType.kind == typeFunc:
+    return sameType(typ, expectedType)
   expectedType.kind in fitSets.getOrDefault(typ.kind, {})
 
 proc conversionCost(self: Sema, typ: Type, expectedType: Type): int =
@@ -321,22 +323,58 @@ proc visit*(self: Sema, node: Symbol): Type =
     self.newError(node, errUnknownSymbol, name, self.suggestName(name))
     return newErrorType()
 
+  let overloads = self.getGlobalOverloads(name)
+  if overloads.len == 1:
+    node.resolvedOverloadId = overloads[0].overloadId
+    return overloads[0].signature
+  elif overloads.len > 1:
+    self.newError(node, errAmbiguousFunctionReference, name)
+    return newErrorType()
+
   return self.getSymbol(name).symbolType
+
+proc visitExpected(self: Sema, node: Expr, expectedType: Type): Type =
+  # A bare function name needs an expected type to pick one of its overloads.
+  let expectedInner =
+    if expectedType.kind == typeMutable: expectedType.args[0]
+    else: expectedType
+
+  if node.kind == nkSymbol and expectedInner.kind == typeFunc:
+    let sym = Symbol(node)
+    let overloads = self.getGlobalOverloads(sym.token.lexeme)
+    if overloads.len > 1:
+      for overload in overloads:
+        if sameType(overload.signature, expectedInner):
+          sym.resolvedOverloadId = overload.overloadId
+          return overload.signature
+
+  return self.visit(node)
 
 proc visit*(self: Sema, node: Binary): Type =
   let ltype = self.visit(node.lvalue)
-  let rtype = self.visit(node.rvalue)
-  self.handleErrorType(ltype, rtype)
+  if ltype.kind == typeError:
+    discard self.visit(node.rvalue)
+    return ltype
 
   if node.token.kind == tkEquals:
     if ltype.kind != typeMutable:
+      discard self.visit(node.rvalue)
       self.newError(node, errImmutableAssignment, node.lvalue.toStr(), ltype.toStr())
       return newErrorType()
+
     let inner = ltype.args[0]
+    let rtype = self.visitExpected(node.rvalue, inner)
+    if rtype.kind == typeError:
+      return rtype
+
     if not self.fits(rtype, inner):
       self.newError(node, errBinaryMismatch, node.token.mean(), inner.toStr & " " & node.token.lexeme & " " & rtype.toStr)
       return newErrorType()
     return newMutableType(inner)
+
+  let rtype = self.visit(node.rvalue)
+  if rtype.kind == typeError:
+    return rtype
 
   let res = binResult(node.token.kind, ltype, rtype)
   if res == typeError:
@@ -417,35 +455,42 @@ proc visit*(self: Sema, node: Call): Type =
       return self.resolveOverloadCall(node, overloads)
 
   let callee = self.visit(node.value)
-  self.handleErrorType(callee)
+  if callee.kind == typeError:
+    return callee
 
-  var argTypes: seq[Type]
-  for a in node.arguments:
-    let t = self.visit(a)
-    self.handleErrorType(t)
-    argTypes.add t
+  let callable =
+    if callee.kind == typeMutable: callee.args[0]
+    else: callee
 
-  if callee.kind != typeFunc:
+  if callable.kind != typeFunc:
+    for a in node.arguments:
+      discard self.visit(a)
     self.newError(node.value, errNotCallable, node.value.toStr)
     return newErrorType()
 
-  if argTypes.len != callee.funcArgTypes.len:
-    self.newError(node, errWrongArity, $argTypes.len, $callee.funcArgTypes.len)
+  if node.arguments.len != callable.funcArgTypes.len:
+    for a in node.arguments:
+      discard self.visit(a)
+    self.newError(node, errWrongArity, $node.arguments.len,
+      $callable.funcArgTypes.len)
     return newErrorType()
 
-  for i in 0 ..< callee.funcArgTypes.len:
-    if self.conversionCost(argTypes[i], callee.funcArgTypes[i]) < 0:
-      let arg = node.arguments[i]
+  for i, arg in node.arguments:
+    let t = self.visitExpected(arg, callable.funcArgTypes[i])
+    if t.kind == typeError:
+      return t
+
+    if self.conversionCost(t, callable.funcArgTypes[i]) < 0:
       self.newError(arg, errArgMismatch, arg.toStr,
-                   diagnosticTypeStr(argTypes[i]),
-                   diagnosticTypeStr(callee.funcArgTypes[i]))
+                   diagnosticTypeStr(t),
+                   diagnosticTypeStr(callable.funcArgTypes[i]))
       return newErrorType()
 
   if overloads.len == 1:
     node.resolvedOverloadId = overloads[0].overloadId
 
-  node.isVoidCall = callee.funcReturnType[].kind == typeVoid
-  return callee.funcReturnType[]
+  node.isVoidCall = callable.funcReturnType[].kind == typeVoid
+  return callable.funcReturnType[]
 
 proc visit*(self: Sema, node: Block): bool =
   var unreachableFounder: Stmt
@@ -481,7 +526,7 @@ proc visit*(self: Sema, node: Decl): bool =
   # earlier on the same line.
   for entry in node.declEntries:
     if entry.value != nil:
-      let typ = self.visit(entry.value)
+      let typ = self.visitExpected(entry.value, expectedType)
       if typ.kind == typeError:
         successfulness = false
 
@@ -795,7 +840,7 @@ proc visit*(self: Sema, node: Return): bool =
   let context = self.getFuncContext() 
 
   if node.value != nil:
-    let t = self.visit(node.value)
+    let t = self.visitExpected(node.value, context.funcReturnType)
     self.manageErrorType(t)
 
     if context.funcReturnType.kind == typeVoid:

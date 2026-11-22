@@ -193,3 +193,127 @@ int outer(int n):
   return f(n)
 """)
     check errFuncRedefinition in a.kinds
+
+  test "function values can be declared and called":
+    let a = analyze("""
+int add(int a, int b):
+  return a + b
+int(int, int) f = add
+int x = f(1, 2)
+""")
+    check a.errors.len == 0
+    check "proc (a0: int, a1: int): int" in a.generated
+    check "= addza1" in a.generated
+    check "f(1, 2)" in a.generated
+
+  test "functions can be passed as arguments":
+    let a = analyze("""
+int add(int a, int b):
+  return a + b
+int apply(int(int, int) f, int a, int b):
+  return f(a, b)
+int x = apply(add, 1, 2)
+""")
+    check a.errors.len == 0
+    check "f: proc (a0: int, a1: int): int" in a.generated
+    check "applyza2(addza1, 1, 2)" in a.generated
+
+  test "functions can be returned and called":
+    let a = analyze("""
+int add(int a, int b):
+  return a + b
+int(int, int) get():
+  return add
+int x = get()(1, 2)
+""")
+    check a.errors.len == 0
+    check "getza2(): proc (a0: int, a1: int): int" in a.generated
+    check "getza2()(1, 2)" in a.generated
+
+  test "mutable parameters are preserved in function types":
+    let a = analyze("""
+int add(int mut a, int b):
+  a = a + b
+  return a
+int apply(int(mut int, int) f):
+  int mut x = 1
+  return f(x, 2)
+int y = apply(add)
+""")
+    check a.errors.len == 0
+    check "proc (a0: var int, a1: int): int" in a.generated
+
+  test "overloaded functions resolve by expected type":
+    let a = analyze("""
+int f(int a):
+  return a
+int f(bool a):
+  return 1
+int(int) g = f
+int x = g(1)
+""")
+    check a.errors.len == 0
+    check "= fza1" in a.generated
+
+  test "overloaded functions resolve as call arguments":
+    let a = analyze("""
+int f(int a):
+  return a
+int f(bool a):
+  return 1
+int apply(int(int) fn, int x):
+  return fn(x)
+int y = apply(f, 1)
+""")
+    check a.errors.len == 0
+    check "applyza3(fza1, 1)" in a.generated
+
+  test "ambiguous function references are rejected":
+    let a = analyze("""
+int f(int a):
+  return a
+int f(bool a):
+  return 1
+int x = f
+""")
+    check errAmbiguousFunctionReference in a.kinds
+
+  test "mutable function variables can be reassigned":
+    let a = analyze("""
+int add(int a, int b):
+  return a + b
+int sub(int a, int b):
+  return a - b
+int(int, int) mut f = add
+f = sub
+int x = f(3, 1)
+""")
+    check a.errors.len == 0
+    check "var f: proc (a0: int, a1: int): int = addza1" in a.generated
+    check "f = subza2" in a.generated
+
+  test "void functions can be stored in function values":
+    let a = analyze("""
+void hello():
+  int x = 1
+void() f = hello
+void main():
+  f()
+""")
+    check a.errors.len == 0
+    check "proc (): void" in a.generated
+    check "f();" in a.generated
+    check "discard f()" notin a.generated
+
+  test "function values can return void functions":
+    let a = analyze("""
+void hello():
+  int x = 1
+void() get():
+  return hello
+void main():
+  get()()
+""")
+    check a.errors.len == 0
+    check "getza2(): proc (): void" in a.generated
+    check "getza2()();" in a.generated

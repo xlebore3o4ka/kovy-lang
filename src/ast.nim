@@ -46,6 +46,7 @@ type
   Block* = ref object of Stmt
     stmts*: seq[Stmt]
   Symbol* = ref object of Expr
+    resolvedOverloadId*: int  # 0 = not a reference to a global function
   ExprStmt* = ref object of Stmt
     expr*: Expr
   Decl* = ref object of Stmt

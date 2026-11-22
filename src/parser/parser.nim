@@ -132,7 +132,8 @@ proc parsePrimary(self: Parser, prevToken: Token): Expr =
 proc parsePostfix(self: Parser, prevToken: Token): Expr =
   result = self.parsePrimary(prevToken)
 
-  if self.peekToken().kind == tkLParen:
+  # Calls can be chained: `get()(1, 2)`.
+  while self.peekToken().kind == tkLParen:
     let t = self.nextToken()
     var arguments: seq[Expr] = @[]
 
