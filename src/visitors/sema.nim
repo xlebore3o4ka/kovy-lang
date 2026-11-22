@@ -256,6 +256,10 @@ proc newError(self: Sema, node: Node, kind: ErrorKind, placeholders: varargs[str
   let t = node.token
   self.errors.add errors.newError(kind, t.file, t.line, t.col, t.lexeme.len, @placeholders)
 
+proc newError(self: Sema, token: Token, kind: ErrorKind, placeholders: varargs[string, `$`]) =
+  self.errors.add errors.newError(kind, token.file, token.line, token.col,
+    token.lexeme.len, @placeholders)
+
 proc sameParams(a, b: Type): bool =
   if a.kind != typeFunc or b.kind != typeFunc:
     return false
@@ -467,28 +471,29 @@ proc visit*(self: Sema, node: ExprStmt): bool =
 
 proc visit*(self: Sema, node: Decl): bool =
   let expectedType = node.typ
-  let name = node.token.lexeme
-
+  let symbolType = if node.mut: newMutableType(expectedType) else: expectedType
   var successfulness = true
 
-  if node.value != nil:
-    let typ = self.visit(node.value)
-    if typ.kind == typeError:
+  # Source order matters, because an initializer may reference a name declared
+  # earlier on the same line.
+  for entry in node.declEntries:
+    if entry.value != nil:
+      let typ = self.visit(entry.value)
+      if typ.kind == typeError:
+        successfulness = false
+
+      if not self.fits(typ, expectedType):
+        self.newError(entry.value, errDoesNotFit, typ.toStr, expectedType.toStr)
+        successfulness = false
+
+    if self.symbolExistsInScope(entry.name):
+      let sym = self.getSymbol(entry.name)
+      let file = sym.token.file
+      let line = sym.token.line
+      self.newError(entry.token, errRedeclaration, entry.name, file, line)
       successfulness = false
 
-    if not self.fits(typ, expectedType):
-      self.newError(node.value, errDoesNotFit, typ.toStr, expectedType.toStr)
-      successfulness = false
-
-  if self.symbolExistsInScope(name):
-    let sym = self.getSymbol(name)
-    let file = sym.token.file
-    let line = sym.token.line
-    self.newError(node, errRedeclaration, name, file, line)
-    successfulness = false
-
-  let typ = if node.mut: newMutableType(expectedType) else: expectedType
-  self.newSymbol(node.token, typ)
+    self.newSymbol(entry.token, symbolType)
 
   return successfulness
 
@@ -595,12 +600,13 @@ proc visit*(self: Sema, node: FuncDecl): bool =
   var argTypes: seq[Type]
 
   for decl in node.arguments:
-    if decl.value != nil:
-      self.newError(decl, errDefaultForbidden, decl.token.lexeme)
-      # Defaults are forbidden, so treat the parameter as required from here on.
-      # This also keeps the rest of the pipeline free of cascading errors and
-      # prevents default values from leaking into codegen.
-      decl.value = nil
+    for entry in decl.declEntries:
+      if entry.value != nil:
+        self.newError(entry.token, errDefaultForbidden, entry.name)
+        # Defaults are forbidden, so treat the parameter as required from here on.
+        # This also keeps the rest of the pipeline free of cascading errors and
+        # prevents default values from leaking into codegen.
+        decl.decls[entry.name].value = nil
     argTypes.add(if decl.mut: newMutableType(decl.typ) else: decl.typ)
 
   let returnType =

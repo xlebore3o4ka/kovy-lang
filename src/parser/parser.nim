@@ -1,6 +1,6 @@
 import lexer, tokens
 import ../[errors, ast, types]
-import std/[macros]
+import std/[macros, tables]
 
 type
   Parser* = ref object
@@ -241,22 +241,50 @@ proc parseFuncDecl*(self: Parser, typ: Type, mut: bool, name: Token): Stmt =
   var arguments: seq[Decl]
 
   while self.peekToken().kind notin {tkEOF, tkRParen}:
-    let decl = self.parseDecl(self.parseType())
-    if decl.kind != nkDecl:
-      let t = decl.token
-      self.newError(errIllformedArgument, t)
-      return t.newInvalidStmt()
+    let paramType = self.parseType()
+    let paramMut =
+      if self.peekToken().kind == tkMut:
+        discard self.nextToken()
+        true
+      else:
+        false
 
-    # TODO: добавить проверку, что аргумент не объявлен публичным, когда публичность
-    #       будет реализована.
+    let firstName = self.expect(tkIdent,
+      self.toStr(paramType) & " ident = ...").ifUnexpected:
+      return it.newInvalidStmt()
 
-    arguments.add(Decl(decl))
+    # Parameters can share a type: `int a, b` declares two int parameters.
+    # A comma followed by an identifier continues the current group, while a
+    # comma followed by a type starts the next one.
+    var paramName = firstName
+    var atNextGroup = false
+
+    while true:
+      var value: Expr = nil
+      if self.peekToken().kind == tkEquals:
+        value = self.parseExpr(self.nextToken()).exprUnwrap()
+
+      # Store one name per Decl so later stages can treat every parameter
+      # independently while keeping its own token and default value.
+      arguments.add(paramName.newDecl(paramType, paramMut,
+        {paramName.lexeme: (paramName, value)}.toTable))
+
+      if self.peekToken().kind != tkComma:
+        break
+
+      discard self.nextToken()
+      if self.peekToken().kind != tkIdent:
+        atNextGroup = true
+        break
+
+      paramName = self.nextToken()
 
     if self.peekToken().kind in {tkEOF, tkRParen}:
       break
 
-    discard self.expect(tkComma, decl.toStr() & ", " & self.peekToken().lexeme & "...").ifUnexpected:
-      return it.newInvalidStmt()
+    if not atNextGroup:
+      self.newError(errSyntax, self.peekToken())
+      return self.peekToken().newInvalidStmt()
 
   discard self.expect(tkRParen, "( ... )").ifUnexpected:
     return it.newInvalidStmt()
@@ -276,18 +304,38 @@ proc parseDecl*(self: Parser, typ: Type): Stmt =
   else:
     false
 
-  let name = self.expect(tkIdent, self.toStr(typ) & " ident = ...").ifUnexpected:
+  let firstName = self.expect(tkIdent, self.toStr(typ) & " ident = ...").ifUnexpected:
     return it.newInvalidStmt()
-  
-  var value: Expr = nil
-  let t = self.peekToken()
-  if t.kind == tkEquals:
-    value = self.parseExpr(self.nextToken()).exprUnwrap()
 
-  elif t.kind == tkLParen:
-    return self.parseFuncDecl(typ, mut, name)
+  if self.peekToken().kind == tkLParen:
+    return self.parseFuncDecl(typ, mut, firstName)
 
-  return newDecl(name, typ, mut, value)
+  let decl = newDecl(firstName, typ, mut)
+  var name = firstName
+
+  while true:
+    if name.lexeme in decl.decls:
+      let first = decl.decls[name.lexeme].token
+      self.newError(errRedeclaration, name, name.lexeme, first.file, first.line)
+      return name.newInvalidStmt()
+
+    var value: Expr = nil
+    if self.peekToken().kind == tkEquals:
+      value = self.parseExpr(self.nextToken()).exprUnwrap()
+
+    if value == nil:
+      decl.addDecl(name)
+    else:
+      decl.addDecl(name, value)
+
+    if self.peekToken().kind != tkComma:
+      break
+
+    discard self.nextToken()
+    name = self.expect(tkIdent, self.toStr(typ) & " ident = ...").ifUnexpected:
+      return it.newInvalidStmt()
+
+  return decl
 
 proc parseBranch*(self: Parser, t: Token): Stmt =
   let cond = self.parseExpr(t).exprUnwrap()

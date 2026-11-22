@@ -1,6 +1,8 @@
 import parser/tokens
 import std/[strutils]
 import std/[sequtils]
+import std/[tables]
+import std/[algorithm]
 import types
 
 type
@@ -49,7 +51,7 @@ type
   Decl* = ref object of Stmt
     typ*: Type
     mut*: bool
-    value*: Expr
+    decls*: Table[string, tuple[token: Token, value: Expr]]
   Branch* = ref object of Stmt
     cond*: Expr
     ifThen*: Block
@@ -100,8 +102,39 @@ proc newSymbol*(token: Token): Symbol =
 proc newExprStmt*(token: Token, expr: Expr): ExprStmt =
   ExprStmt(kind: nkExprStmt, token: token, expr: expr)
 
-proc newDecl*(token: Token, typ: Type, mut: bool, value: Expr): Decl =
-  Decl(kind: nkDecl, token: token, typ: typ, mut: mut, value: value)
+proc newDecl*(token: Token, typ: Type, mut: bool,
+              decls: Table[string, tuple[token: Token, value: Expr]]): Decl =
+  Decl(kind: nkDecl, token: token, typ: typ, mut: mut, decls: decls)
+
+proc newDecl*(token: Token, typ: Type, mut: bool): Decl =
+  newDecl(token, typ, mut,
+    initTable[string, tuple[token: Token, value: Expr]]())
+
+proc addDecl*(decl: Decl, name: Token, value: Expr) =
+  decl.decls[name.lexeme] = (token: name, value: value)
+
+proc addDecl*(decl: Decl, name: Token) =
+  decl.decls[name.lexeme] = (token: name, value: nil)
+
+proc getDeclValue*(decl: Decl, name: string): Expr =
+  if name in decl.decls:
+    result = decl.decls[name].value
+
+proc getDeclToken*(decl: Decl, name: string): Token =
+  if name in decl.decls:
+    result = decl.decls[name].token
+
+proc declEntries*(decl: Decl): seq[tuple[name: string, token: Token, value: Expr]] =
+  # Tables do not preserve insertion order, so recover the source order.
+  for name, entry in decl.decls:
+    result.add((name: name, token: entry.token, value: entry.value))
+  result.sort(proc(a, b: tuple[name: string, token: Token, value: Expr]): int =
+    result = cmp(a.token.line, b.token.line)
+    if result == 0:
+      result = cmp(a.token.col, b.token.col)
+    if result == 0:
+      result = cmp(a.name, b.name)
+  )
 
 proc newBranch*(token: Token, cond: Expr, ifThen: Block,
                 elifs: seq[tuple[cond: Expr, elifThen: Block]],
@@ -165,8 +198,11 @@ proc toStr*(stmt: Stmt): string =
   of nkExprStmt: ExprStmt(stmt).expr.toStr
   of nkDecl:
     let d = Decl(stmt)
-    d.typ.toStr & " " & d.token.lexeme &
-      (if d.value != nil: " = " & d.value.toStr else: "")
+    var parts: seq[string]
+    for entry in d.declEntries:
+      parts.add entry.name &
+        (if entry.value != nil: " = " & entry.value.toStr else: "")
+    d.typ.toStr & " " & parts.join(", ")
   of nkBranch:
     let b = Branch(stmt)
     var parts = @["if " & b.cond.toStr & " " & b.ifThen.toStr]

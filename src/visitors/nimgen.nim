@@ -1,6 +1,6 @@
 import ../[ast, types]
 import ../parser/tokens
-import std/strutils
+import std/[strutils]
 
 type
   Nimgen* = ref object
@@ -160,11 +160,16 @@ proc nimType(typ: Type): string =
   return typ.toStr()
 
 proc visit*(self: Nimgen, node: Decl): string =
-  emit (if node.mut: "var " else: "let "),
-       normSym(node.token.lexeme),
-       ": ", node.typ.nimType()
-  if node.value != nil:
-    emit " = ", self.visit(node.value)
+  let typ = node.typ.nimType()
+  for i, entry in node.declEntries:
+    if i > 0:
+      emit "; "
+    # `let` requires an initializer in Nim, so uninitialized declarations use
+    # `var`; Kovy's own sema still enforces immutability for non-mut symbols.
+    emit (if node.mut or entry.value == nil: "var " else: "let "),
+         normSym(entry.name), ": ", typ
+    if entry.value != nil:
+      emit " = ", self.visit(entry.value)
 
 proc visit*(self: Nimgen, node: Branch): string =
   emit "if ", self.visit(node.cond), self.visit(node.ifThen)
@@ -192,7 +197,8 @@ proc visit*(self: Nimgen, node: FuncDecl): string =
 
   var args: seq[string]
   for decl in node.arguments:
-    args.add normSym(decl.token.lexeme) & (if decl.mut: ": var " else: ": ") & nimType(decl.typ)
+    for entry in decl.declEntries:
+      args.add normSym(entry.name) & (if decl.mut: ": var " else: ": ") & nimType(decl.typ)
 
   emit args.join(", "), ")" & (if node.mut: ": var " else: ": ") & nimType(node.returnType)
 
