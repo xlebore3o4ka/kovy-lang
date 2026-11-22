@@ -21,6 +21,7 @@ tokenKinds:
 
   tkEquals: "equals operator '='"
   tkColon: "colon operator ':'"
+  tkBang: "bang operator '!'"
 
   tkGt: "greater-than operator '>'"
   tkLt: "less-than operator '<'"
@@ -81,6 +82,7 @@ registerOp tkGe,     ">="
 registerOp tkLe,     "<="
 registerOp tkEq,     "=="
 registerOp tkNe,     "!="
+registerOp tkBang,   "!"
 registerOp tkColon,  ":"
 
 var keywordsTable*: Table[string, TokenKind]
