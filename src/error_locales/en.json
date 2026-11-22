@@ -127,6 +127,10 @@
     "message": "No overload of @q0 matches arguments (@1)",
     "addinfo": "@2"
   },
+  "errEmptyFunctionBody": {
+    "message": "Function body cannot be empty",
+    "addinfo": "A function must contain at least one statement"
+  },
   "errDefaultForbidden": {
     "message": "Parameter @q0 cannot have a default value",
     "addinfo": "Default parameter values are not supported"

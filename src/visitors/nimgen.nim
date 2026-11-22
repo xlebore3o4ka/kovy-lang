@@ -153,6 +153,9 @@ proc visit*(self: Nimgen, node: Block): string =
 proc visit*(self: Nimgen, node: ExprStmt): string =
   if node.expr.kind == nkBinary and (let expr = Binary(node.expr); expr).token.kind == tkEquals:
     emit self.visit(expr.lvalue) & " = " & self.visit(expr.rvalue)
+  elif node.expr.kind == nkCall and Call(node.expr).isVoidCall:
+    # Nim rejects `discard f()` when `f` returns void.
+    emit self.visit(node.expr)
   else:
     emit "discard ", self.visit(node.expr)
 

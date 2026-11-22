@@ -26,6 +26,7 @@ type
     errForwardOutsideGlobal, errFuncSignatureMismatch
     errFuncRedefinition, errUnresolvedForward
     errOverloadByReturnType, errAmbiguousCall, errNoMatchingOverload
+    errEmptyFunctionBody
     errDefaultForbidden
 
   Error* = object

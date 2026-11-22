@@ -74,6 +74,7 @@ type
     value*: Expr
     arguments*: seq[Expr]
     resolvedOverloadId*: int  # 0 = resolved without an overload set
+    isVoidCall*: bool         # sema result: the callee returns void
 
 proc newInvalidStmt*(token: Token): Stmt =
   InvalidStmt(kind: nkInvalid, token: token)

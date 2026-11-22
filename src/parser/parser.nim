@@ -200,9 +200,14 @@ proc parseStmts(self: Parser, b: Block) =
         "...; " & self.peekToken().lexeme & "` or `...\\n " & self.peekToken().lexeme)
       break
 
-proc parseBlock(self: Parser): tuple[ok: bool, res: Stmt] =
+proc parseBlock(self: Parser,
+                requireBody: bool = false): tuple[ok: bool, res: Stmt] =
   let colon = self.expect(tkColon, "...: " & self.peekToken().lexeme & " ...").ifUnexpected:
     return (false, it.newInvalidStmt())
+
+  if requireBody and self.peekToken().kind in {tkEOS, tkEOF, tkDedent}:
+    self.newError(errEmptyFunctionBody, colon)
+    return (false, colon.newInvalidStmt())
 
   let b = colon.newBlock(@[])
 
@@ -227,6 +232,10 @@ proc parseBlock(self: Parser): tuple[ok: bool, res: Stmt] =
 
   discard self.expect(tkDedent, "...:\\n  ...\\n" & self.peekToken().lexeme).ifUnexpected:
       return (false, it.newInvalidStmt())
+
+  if requireBody and b.stmts.len == 0:
+    self.newError(errEmptyFunctionBody, colon)
+    return (false, colon.newInvalidStmt())
 
   return (true, b)
 
@@ -291,7 +300,7 @@ proc parseFuncDecl*(self: Parser, typ: Type, mut: bool, name: Token): Stmt =
 
   let body: Block =
     if self.peekToken().kind == tkColon:
-      self.parseBlock().blockUnwrap()
+      self.parseBlock(requireBody = true).blockUnwrap()
     else:
       nil
 

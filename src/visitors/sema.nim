@@ -54,6 +54,7 @@ proc newSema*(errors: ErrorContext, files: FileTracker = nil): Sema =
 
 proc visit*(self: Sema, node: Expr): Type
 proc visit*(self: Sema, node: Stmt): bool
+proc controlAllReturnPaths(self: Sema, node: Stmt): bool
 
 proc newSymbol(self: Sema, token: Token, typ: Type) =
   self.currentScope.symbolTable[token.lexeme] = Sym(token: token, symbolType: typ, 
@@ -397,6 +398,7 @@ proc resolveOverloadCall(self: Sema, node: Call,
 
   if candidates.len == 1:
     node.resolvedOverloadId = candidates[0].overloadId
+    node.isVoidCall = candidates[0].signature.funcReturnType[].kind == typeVoid
     return candidates[0].signature.funcReturnType[]
   elif candidates.len > 1:
     self.newError(node, errAmbiguousCall, name, argsStr,
@@ -442,6 +444,7 @@ proc visit*(self: Sema, node: Call): Type =
   if overloads.len == 1:
     node.resolvedOverloadId = overloads[0].overloadId
 
+  node.isVoidCall = callee.funcReturnType[].kind == typeVoid
   return callee.funcReturnType[]
 
 proc visit*(self: Sema, node: Block): bool =
@@ -456,7 +459,7 @@ proc visit*(self: Sema, node: Block): bool =
 
     discard self.visit(stmt)
 
-    if stmt.kind == nkReturn and unreachableFounder == nil:
+    if unreachableFounder == nil and self.controlAllReturnPaths(stmt):
       unreachableFounder = stmt
       fromLine = stmt.token.line + 1
 
@@ -556,6 +559,30 @@ proc visit*(self: Sema, node: Continue): bool =
     return false
   return true
 
+proc exitsLoop(node: Stmt): bool =
+  case node.kind
+  of nkBreak:
+    return true
+  of nkBlock:
+    for stmt in Block(node).stmts:
+      if exitsLoop(stmt):
+        return true
+    return false
+  of nkBranch:
+    let branch = Branch(node)
+    if exitsLoop(branch.ifThen):
+      return true
+    for (_, elifThen) in branch.elifs:
+      if exitsLoop(elifThen):
+        return true
+    return branch.elseThen != nil and exitsLoop(branch.elseThen)
+  # A break in a nested loop belongs to that loop, and a nested function has
+  # its own loop context.
+  of nkWhile, nkFuncDecl:
+    return false
+  else:
+    return false
+
 proc controlAllReturnPaths(self: Sema, node: Stmt): bool =
   case node.kind
   of nkBlock:
@@ -575,6 +602,11 @@ proc controlAllReturnPaths(self: Sema, node: Stmt): bool =
       if not self.controlAllReturnPaths(elifThen):
         return false
     return self.controlAllReturnPaths(branch.elseThen)
+  of nkWhile:
+    let loop = While(node)
+    # `while true` never falls through unless a break can leave the loop.
+    return loop.cond.kind == nkBool and Bool(loop.cond).value and
+      not exitsLoop(loop.body)
   else:
     return false
 
