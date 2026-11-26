@@ -138,5 +138,25 @@
   "errDefaultForbidden": {
     "message": "Parameter @q0 cannot have a default value",
     "addinfo": "Default parameter values are not supported"
+  },
+  "errAllocCount": {
+    "message": "alloc expects an integer element count, got @c0",
+    "addinfo": ""
+  },
+  "errAllocVoid": {
+    "message": "Cannot allocate elements of type void",
+    "addinfo": ""
+  },
+  "errDerefNonPointer": {
+    "message": "Cannot dereference a non-pointer value of type @c0",
+    "addinfo": ""
+  },
+  "errAddrFromImmutable": {
+    "message": "Cannot take the address of an immutable expression",
+    "addinfo": "@c0 is not mutable"
+  },
+  "errNonConcreteType": {
+    "message": "Type @c0 is not concrete",
+    "addinfo": ""
   }
 }

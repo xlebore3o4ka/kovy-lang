@@ -23,12 +23,14 @@ type
     nkFuncDecl
     nkReturn
     nkCall
+    nkAlloc
 
   Node* = ref object of RootObj
     kind*: NodeKind
     token*: Token
     
   Expr* = ref object of Node
+    grantsWrite*: bool  # sema result: pointer expression grants write access
   Stmt* = ref object of Node
 
   InvalidExpr* = ref object of Expr
@@ -76,6 +78,9 @@ type
     arguments*: seq[Expr]
     resolvedOverloadId*: int  # 0 = resolved without an overload set
     isVoidCall*: bool         # sema result: the callee returns void
+  Alloc* = ref object of Expr
+    count*: Expr
+    elemType*: Type
 
 proc newInvalidStmt*(token: Token): Stmt =
   InvalidStmt(kind: nkInvalid, token: token)
@@ -164,6 +169,9 @@ proc newReturn*(token: Token, value: Expr): Return =
 proc newCall*(token: Token, value: Expr, arguments: seq[Expr]): Call =
   Call(kind: nkCall, token: token, value: value, arguments: arguments)
 
+proc newAlloc*(token: Token, count: Expr, elemType: Type): Alloc =
+  Alloc(kind: nkAlloc, token: token, count: count, elemType: elemType)
+
 proc addElif*(s: var seq[tuple[cond: Expr, elifThen: Block]],
               cond: Expr, elifThen: Block) =
   s.add((cond: cond, elifThen: elifThen))
@@ -182,14 +190,23 @@ proc toStr*(expr: Expr): string =
   of nkBinary: binaryToStr(Binary(expr).lvalue, Binary(expr).rvalue, expr.token)
   of nkUnary:
     let un = Unary(expr)
-    if un.token.kind == tkNot:
-      un.token.lexeme & " " & un.value.toStr
+    let operand =
+      if un.value.kind == nkBinary: "(" & un.value.toStr & ")"
+      else: un.value.toStr
+    if un.token.kind in {tkNot, tkAddr}:
+      un.token.lexeme & " " & operand
     else:
-      un.token.lexeme & un.value.toStr
+      un.token.lexeme & operand
   of nkSymbol: expr.token.lexeme
   of nkCall:
     let c = Call(expr)
     c.value.toStr & "(" & c.arguments.mapIt(it.toStr).join(", ") & ")"
+  of nkAlloc:
+    let a = Alloc(expr)
+    let count =
+      if a.count.kind == nkBinary: "(" & a.count.toStr & ")"
+      else: a.count.toStr
+    "alloc " & count & " of " & a.elemType.toStr
   else: ""
 
 proc toStr*(stmt: Stmt): string =

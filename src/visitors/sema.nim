@@ -131,6 +131,8 @@ proc fits(self: Sema, typ: Type, expectedType: Type): bool =
     return self.fits(typ, expectedType.args[0])
   if typ.kind == typeFunc or expectedType.kind == typeFunc:
     return sameType(typ, expectedType)
+  if typ.kind == typePtr or expectedType.kind == typePtr:
+    return sameType(typ, expectedType)
   expectedType.kind in fitSets.getOrDefault(typ.kind, {})
 
 proc conversionCost(self: Sema, typ: Type, expectedType: Type): int =
@@ -331,7 +333,10 @@ proc visit*(self: Sema, node: Symbol): Type =
     self.newError(node, errAmbiguousFunctionReference, name)
     return newErrorType()
 
-  return self.getSymbol(name).symbolType
+  let symbolType = self.getSymbol(name).symbolType
+  # Only a mutable symbol grants write access through a pointer value.
+  node.grantsWrite = symbolType.kind == typeMutable
+  return symbolType
 
 proc visitExpected(self: Sema, node: Expr, expectedType: Type): Type =
   # A bare function name needs an expected type to pick one of its overloads.
@@ -351,6 +356,7 @@ proc visitExpected(self: Sema, node: Expr, expectedType: Type): Type =
   return self.visit(node)
 
 proc visit*(self: Sema, node: Binary): Type =
+  node.grantsWrite = false
   let ltype = self.visit(node.lvalue)
   if ltype.kind == typeError:
     discard self.visit(node.rvalue)
@@ -370,11 +376,37 @@ proc visit*(self: Sema, node: Binary): Type =
     if not self.fits(rtype, inner):
       self.newError(node, errBinaryMismatch, node.token.mean(), inner.toStr & " " & node.token.lexeme & " " & rtype.toStr)
       return newErrorType()
+    node.grantsWrite = node.lvalue.grantsWrite
     return newMutableType(inner)
 
   let rtype = self.visit(node.rvalue)
   if rtype.kind == typeError:
     return rtype
+
+  let lbase = if ltype.kind == typeMutable: ltype.args[0] else: ltype
+  let rbase = if rtype.kind == typeMutable: rtype.args[0] else: rtype
+
+  if lbase.kind == typePtr or rbase.kind == typePtr:
+    case node.token.kind
+    of tkPlus:
+      if lbase.kind == typePtr and self.fits(rtype, newIntType()):
+        node.grantsWrite = node.lvalue.grantsWrite
+        return lbase
+      if rbase.kind == typePtr and self.fits(ltype, newIntType()):
+        node.grantsWrite = node.rvalue.grantsWrite
+        return rbase
+    of tkMinus:
+      if lbase.kind == typePtr and self.fits(rtype, newIntType()):
+        node.grantsWrite = node.lvalue.grantsWrite
+        return lbase
+      if lbase.kind == typePtr and rbase.kind == typePtr and sameType(lbase, rbase):
+        return newIntType()
+    else:
+      discard
+
+    self.newError(node, errBinaryMismatch, node.token.mean(),
+      diagnosticTypeStr(ltype) & " " & node.token.lexeme & " " & diagnosticTypeStr(rtype))
+    return newErrorType()
 
   let res = binResult(node.token.kind, ltype, rtype)
   if res == typeError:
@@ -383,14 +415,42 @@ proc visit*(self: Sema, node: Binary): Type =
   return typeOfKind(res)
 
 proc visit*(self: Sema, node: Unary): Type =
-  let typ = self.visit(node.value)
+  node.grantsWrite = false
+  var typ = self.visit(node.value)
   self.handleErrorType(typ)
 
-  let res = unResult(node.token.kind, typ)
-  if res == typeError:
-    self.newError(node, errUnaryMismatch, node.token.mean(), typ.toStr)
-    return newErrorType()
-  return typeOfKind(res)
+  if node.token.kind == tkHash:
+    let original = typ
+    if typ.kind == typeMutable:
+      typ = typ.args[0]
+
+    if typ.kind != typePtr:
+      self.newError(node.value, errDerefNonPointer, diagnosticTypeStr(original))
+      return newErrorType()
+
+    # Write access is an expression property: only a mutable pointer symbol,
+    # a mutable return value, or an expression derived from them grants it.
+    # `alloc` and `addr` deliberately do not.
+    let writable = node.value.grantsWrite
+    node.grantsWrite = writable
+    if writable:
+      return newMutableType(typ.args[0])
+    return typ.args[0]
+
+  elif node.token.kind == tkAddr:
+    if typ.kind != typeMutable:
+      self.newError(node.value, errAddrFromImmutable, node.value.toStr())
+      return newErrorType()
+    # Taking an address does not make the resulting pointer writable; bind it
+    # to a mutable pointer symbol to obtain write access.
+    return newPtrType(typ.args[0])
+
+  else:
+    let res = unResult(node.token.kind, typ)
+    if res == typeError:
+      self.newError(node, errUnaryMismatch, node.token.mean(), typ.toStr)
+      return newErrorType()
+    return typeOfKind(res)
 
 proc resolveOverloadCall(self: Sema, node: Call,
     overloads: seq[Overload]): Type =
@@ -436,8 +496,10 @@ proc resolveOverloadCall(self: Sema, node: Call,
 
   if candidates.len == 1:
     node.resolvedOverloadId = candidates[0].overloadId
-    node.isVoidCall = candidates[0].signature.funcReturnType[].kind == typeVoid
-    return candidates[0].signature.funcReturnType[]
+    let returnType = candidates[0].signature.funcReturnType[]
+    node.isVoidCall = returnType.kind == typeVoid
+    node.grantsWrite = returnType.kind == typeMutable
+    return returnType
   elif candidates.len > 1:
     self.newError(node, errAmbiguousCall, name, argsStr,
       self.overloadList(candidates))
@@ -490,7 +552,29 @@ proc visit*(self: Sema, node: Call): Type =
     node.resolvedOverloadId = overloads[0].overloadId
 
   node.isVoidCall = callable.funcReturnType[].kind == typeVoid
+  # A mutable return value carries write access; an immutable one does not.
+  node.grantsWrite = callable.funcReturnType[].kind == typeMutable
   return callable.funcReturnType[]
+
+proc visit*(self: Sema, node: Alloc): Type =
+  # Freshly allocated memory is not writable by itself: write access must come
+  # from a mutable pointer symbol that stores the result.
+  node.grantsWrite = false
+  let countT = self.visit(node.count)
+  self.handleErrorType(countT)
+
+  if node.elemType.kind == typeError:
+    return newErrorType()
+
+  if node.elemType.kind == typeVoid:
+    self.newError(node, errAllocVoid)
+    return newErrorType()
+
+  if not self.fits(countT, newIntType()):
+    self.newError(node.count, errAllocCount, diagnosticTypeStr(countT))
+    return newErrorType()
+
+  return newPtrType(node.elemType)
 
 proc visit*(self: Sema, node: Block): bool =
   var unreachableFounder: Stmt
@@ -826,6 +910,7 @@ proc finalize*(self: Sema) =
 proc getMutabilitySource(self: Sema, node: Expr): Sym =
   case node.kind
   of nkBinary: return self.getMutabilitySource(Binary(node).lvalue)
+  of nkUnary:  return self.getMutabilitySource(Unary(node).value)
   of nkCall:   return self.getMutabilitySource(Call(node).value)
   of nkSymbol: return self.getSymbol(node.token.lexeme)
   else:        raise newException(Exception, "A mutable expression cannot be generated by a non-symbol")
@@ -875,6 +960,7 @@ proc visit*(self: Sema, node: Expr): Type =
   of nkBinary: result = self.visit(Binary(node))
   of nkUnary:  result = self.visit(Unary(node))
   of nkCall:   result = self.visit(Call(node))
+  of nkAlloc:  result = self.visit(Alloc(node))
   else: result = newErrorType()
 
 proc visit*(self: Sema, node: Stmt): bool =

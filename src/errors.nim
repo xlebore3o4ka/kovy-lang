@@ -30,6 +30,12 @@ type
     errEmptyFunctionBody
     errDefaultForbidden
 
+    errAllocCount
+    errAllocVoid
+    errDerefNonPointer
+    errAddrFromImmutable
+    errNonConcreteType
+
   Error* = object
     kind*: ErrorKind
     placeholders*: seq[string]

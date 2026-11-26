@@ -9,6 +9,7 @@ type
     typeVoid
     typeError
     typeMutable
+    typePtr
     typeFunc
 
   Type* = object
@@ -41,6 +42,9 @@ proc newErrorType*: Type =
 proc newMutableType*(typ: Type): Type =
   Type(name: "mutable", args: @[typ], kind: typeMutable)
 
+proc newPtrType*(typ: Type): Type =
+  Type(name: "ptr", args: @[typ], kind: typePtr)
+
 proc newFuncType*(returnType: Type, argTypes: seq[Type]): Type =
   var ret = new(Type)
   ret[] = returnType
@@ -60,6 +64,8 @@ proc toStr*(typ: Type): string =
         args.add arg.toStr
     s &= "(" & args.join(", ") & ")"
     s
+  elif typ.kind == typePtr:
+    typ.args[0].toStr & "*"
   elif typ.args.len == 0:
     typ.name
   else:

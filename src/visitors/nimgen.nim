@@ -1,15 +1,27 @@
 import ../[ast, types]
 import ../parser/tokens
-import std/[strutils]
+import ../errors
+import std/[os, strutils]
 
 type
   Nimgen* = ref object
     indentLevel*: Natural = 0
     blockMarker*: string = ":"
     tmpCounter: Natural = 0
+    errors*: ErrorContext
+    syskovyPath*: string
 
-proc newNimgen*(): Nimgen =
-  Nimgen()
+proc newNimgen*(errors: ErrorContext, syskovyPath: string = ""): Nimgen =
+  doAssert errors != nil, "Nimgen requires an ErrorContext"
+  result = Nimgen(errors: errors)
+  result.syskovyPath =
+    if syskovyPath.len > 0: syskovyPath
+    else: currentSourcePath().parentDir().parentDir() / "syskovy"
+
+proc newError(self: Nimgen, token: Token, kind: ErrorKind,
+              placeholders: varargs[string, `$`]) =
+  self.errors.add errors.newError(kind, token.file, token.line, token.col,
+    token.lexeme.len, @placeholders)
 
 proc visit*(self: Nimgen, node: Expr): string
 proc visit*(self: Nimgen, node: Stmt): string
@@ -31,6 +43,22 @@ const nimKeywords = [
   "using", "var", "when", "while", "xor", "yield"
 ]
 
+const reservedNames = [
+  "kovyRuntime", "kovyAlloca", "syskovy"
+]
+
+proc identKey(sym: string): string =
+  # Nim identifiers ignore case (after the first character) and underscores.
+  for i, c in sym:
+    if c != '_':
+      result.add(if i == 0: c else: toLowerAscii(c))
+
+proc isReservedName(enc: string): bool =
+  let key = identKey(enc)
+  for name in reservedNames:
+    if identKey(name) == key:
+      return true
+
 proc encChar(c: char): string =
   case c
   of '_': "zu"
@@ -47,7 +75,12 @@ proc encodeIdent(sym: string): string =
   enc
 
 proc normSym(sym: string): string =
-  let enc = encodeIdent(sym)
+  var enc = encodeIdent(sym)
+  # Runtime names belong to the imported syskovy module. Prefixing with a
+  # literal 'z' cannot collide with `encodeIdent` output: an input 'z' always
+  # becomes "zz", so no regular identifier can start with "zk".
+  if isReservedName(enc):
+    enc = "z" & enc
   if enc in nimKeywords:
     result = "`" & enc & "`"
   else:
@@ -130,11 +163,17 @@ proc visit*(self: Nimgen, node: Binary): string =
     emit self.parenIfBin(node.lvalue), " ", op, " ", self.parenIfBin(node.rvalue)
 
 proc visit*(self: Nimgen, node: Unary): string =
-  emit node.token.nimOp()
-  if node.value.kind in {nkUnary, nkBinary}:
-    emit "(", self.visit(node.value), ")"
+  case node.token.kind
+  of tkHash:
+    emit "(", self.visit(node.value), ")[]"
+  of tkAddr:
+    emit "addr (", self.visit(node.value), ")"
   else:
-    emit self.visit(node.value)
+    emit node.token.nimOp()
+    if node.value.kind in {nkUnary, nkBinary}:
+      emit "(", self.visit(node.value), ")"
+    else:
+      emit self.visit(node.value)
 
 template indent(self: Nimgen): string =
   "  ".repeat(self.indentLevel)
@@ -162,25 +201,39 @@ proc visit*(self: Nimgen, node: ExprStmt): string =
   else:
     emit "discard ", self.visit(node.expr)
 
-proc nimType(typ: Type): string =
+proc nimType(self: Nimgen, typ: Type, token: Token): string =
   case typ.kind
   of typeFunc:
     var args: seq[string]
     for i, arg in typ.funcArgTypes:
       let argName = "a" & $i
       if arg.kind == typeMutable:
-        args.add argName & ": var " & nimType(arg.args[0])
+        args.add argName & ": var " & self.nimType(arg.args[0], token)
       else:
-        args.add argName & ": " & nimType(arg)
+        args.add argName & ": " & self.nimType(arg, token)
     return "proc (" & args.join(", ") & "): " &
-      nimType(typ.funcReturnType[])
+      self.nimType(typ.funcReturnType[], token)
   of typeMutable:
-    return "var " & nimType(typ.args[0])
+    return "var " & self.nimType(typ.args[0], token)
+  of typePtr:
+    if typ.args[0].kind == typeVoid:
+      self.newError(token, errNonConcreteType, typ.toStr)
+      return "pointer"
+    let inner = self.nimType(typ.args[0], token)
+    if typ.args[0].kind == typeFunc:
+      return "ptr (" & inner & ")"
+    return "ptr " & inner
   else:
     return typ.toStr()
 
+proc visit*(self: Nimgen, node: Alloc): string =
+  let elem = self.nimType(node.elemType, node.token)
+  let ptrType = self.nimType(newPtrType(node.elemType), node.token)
+  emit "cast[", ptrType, "](kovyRuntime.kovyAlloca((",
+       self.visit(node.count), ") * sizeof(", elem, ")))"
+
 proc visit*(self: Nimgen, node: Decl): string =
-  let typ = node.typ.nimType()
+  let typ = self.nimType(node.typ, node.token)
   for i, entry in node.declEntries:
     if i > 0:
       emit "; "
@@ -218,9 +271,9 @@ proc visit*(self: Nimgen, node: FuncDecl): string =
   var args: seq[string]
   for decl in node.arguments:
     for entry in decl.declEntries:
-      args.add normSym(entry.name) & (if decl.mut: ": var " else: ": ") & nimType(decl.typ)
+      args.add normSym(entry.name) & (if decl.mut: ": var " else: ": ") & self.nimType(decl.typ, decl.token)
 
-  emit args.join(", "), ")" & (if node.mut: ": var " else: ": ") & nimType(node.returnType)
+  emit args.join(", "), ")" & (if node.mut: ": var " else: ": ") & self.nimType(node.returnType, node.token)
 
   if node.body != nil:
     self.blockMarker = " = "
@@ -239,6 +292,7 @@ proc visit*(self: Nimgen, node: Expr): string =
   of nkBinary: self.visit(Binary(node))
   of nkUnary:  self.visit(Unary(node))
   of nkCall:   self.visit(Call(node))
+  of nkAlloc:  self.visit(Alloc(node))
   else: ""
 
 proc visit*(self: Nimgen, node: Stmt): string =
@@ -255,4 +309,6 @@ proc visit*(self: Nimgen, node: Stmt): string =
   else: ""
 
 proc emit*(ng: Nimgen, node: Node): string =
+  emit "import \"", ng.syskovyPath.replace('\\', '/'),
+       "\" as kovyRuntime except kovyAlloca\n\n"
   emit "block", ng.visit(Block(node))

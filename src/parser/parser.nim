@@ -69,36 +69,37 @@ proc parseType(self: Parser): Type =
     self.newError(errTypeSyntax, t)
     return newErrorType()
 
-  # A type followed by a parenthesized type list is a function type:
-  # `int(mut int, bool)`.
-  if self.peekToken().kind != tkLParen:
-    return
-
-  discard self.nextToken()
-
-  var argTypes: seq[Type]
-  while self.peekToken().kind notin {tkEOF, tkRParen}:
-    let argMut = self.peekToken().kind == tkMut
-    if argMut:
+  while (let tok = self.peekToken(); tok).kind in {tkLParen, tkStar}:
+    if tok.kind == tkLParen:
       discard self.nextToken()
 
-    let argType = self.parseType()
-    if argType.kind == typeError:
-      return newErrorType()
+      var argTypes: seq[Type]
+      while self.peekToken().kind notin {tkEOF, tkRParen}:
+        let argMut = self.peekToken().kind == tkMut
+        if argMut:
+          discard self.nextToken()
 
-    argTypes.add(if argMut: newMutableType(argType) else: argType)
+        let argType = self.parseType()
+        if argType.kind == typeError:
+          return newErrorType()
 
-    if self.peekToken().kind in {tkEOF, tkRParen}:
-      break
+        argTypes.add(if argMut: newMutableType(argType) else: argType)
 
-    discard self.expect(tkComma,
-      "type, " & self.peekToken().lexeme & "...").ifUnexpected:
-      return newErrorType()
+        if self.peekToken().kind in {tkEOF, tkRParen}:
+          break
 
-  discard self.expect(tkRParen, "( ... )").ifUnexpected:
-    return newErrorType()
+        discard self.expect(tkComma,
+          "type, " & self.peekToken().lexeme & "...").ifUnexpected:
+          return newErrorType()
 
-  return newFuncType(result, argTypes)
+      discard self.expect(tkRParen, "( ... )").ifUnexpected:
+        return newErrorType()
+
+      result = newFuncType(result, argTypes)
+
+    elif tok.kind == tkStar:
+      discard self.nextToken()
+      result = newPtrType(result)
 
 proc parsePrimary(self: Parser, prevToken: Token): Expr =
   let t = self.nextToken()
@@ -110,7 +111,7 @@ proc parsePrimary(self: Parser, prevToken: Token): Expr =
   self.highLevelExpr = false
 
   if t.kind == tkLParen:
-    result = self.parseExpr(prevToken)
+    result = self.parseExpr(t)
     discard self.expect(tkRParen, "( ... ) " & self.peekToken().lexeme).ifUnexpected:
       return it.newInvalidExpr()
     return
@@ -122,6 +123,18 @@ proc parsePrimary(self: Parser, prevToken: Token): Expr =
     return t.newBool(true)
   elif t.kind == tkFalse:
     return t.newBool(false)
+  elif t.kind == tkAlloc:
+    if self.peekToken().isType():
+      let typ = self.parseType()
+      return t.newAlloc(Token(kind: tkNumber, lexeme: "1", line: t.line, col: t.col, file: t.file)
+        .newNumber(), typ)
+    else:
+      let expr = self.parseExpr(t)
+      discard self.expect(tkOf, "alloc " & expr.toStr() & " of T").ifUnexpected:
+        return it.newInvalidExpr()
+      let typ = self.parseType()
+
+      return t.newAlloc(expr, typ)
   elif t.kind == tkInvalid:
     return t.newInvalidExpr()
 
@@ -132,7 +145,6 @@ proc parsePrimary(self: Parser, prevToken: Token): Expr =
 proc parsePostfix(self: Parser, prevToken: Token): Expr =
   result = self.parsePrimary(prevToken)
 
-  # Calls can be chained: `get()(1, 2)`.
   while self.peekToken().kind == tkLParen:
     let t = self.nextToken()
     var arguments: seq[Expr] = @[]
@@ -150,7 +162,7 @@ proc parsePostfix(self: Parser, prevToken: Token): Expr =
     result = t.newCall(result, arguments)
 
 proc parseUnary(self: Parser, prevToken: Token): Expr =
-  if self.peekToken().kind in {tkPlus, tkMinus, tkNot}:
+  if self.peekToken().kind in {tkPlus, tkMinus, tkNot, tkHash, tkAddr}:
     let t = self.nextToken()
     result = t.newUnary(self.parseUnary(t))
   else:

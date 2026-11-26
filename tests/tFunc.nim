@@ -24,7 +24,8 @@ proc analyze(source: string): Analysis =
 
   result.errors = ctx.errors
   if result.errors.len == 0:
-    result.generated = newNimgen().emit(tree)
+    result.generated = newNimgen(ctx).emit(tree)
+    result.errors = ctx.errors
 
 proc kinds(analysis: Analysis): seq[ErrorKind] =
   analysis.errors.mapIt(it.kind)
