@@ -37,6 +37,17 @@ nim c --path:src --hints:off --warnings:off -o:/tmp/check_docs scripts/check_doc
 
 The checker is intentionally independent of any Markdown renderer.
 
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on pushes and pull requests to `master`:
+
+- **Test suite** installs the Nimble dependencies and runs
+  `nimble test --hints:off --warnings:off`.
+- **Documentation check** builds `scripts/check_docs.nim` and runs it from the
+  repository root.
+
+Both jobs use Nim 2.2.12. A documentation failure fails the CI run.
+
 ## Manual audit
 
 Automated checks cannot decide whether prose is complete. Before a docs
