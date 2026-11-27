@@ -1,0 +1,90 @@
+int PUSH = 1, ADD = 2, SUB = 3, MUL = 4, DIV = 5, NEG = 6, HALT = 0
+int TOTAL_INST_COUNT = 7
+
+void wr(int* mut a, int mut i, int b):
+  #(a + i) = b
+  i = i + 1
+
+void wr(int* mut a, int mut i, int b, int c):
+  #(a + i) = b
+  i = i + 1
+  #(a + i) = c
+  i = i + 1
+
+int mut bytecodeSize
+int* mut bytecode = alloc (bytecodeSize = 256) of int
+
+int* mut stack = alloc 256 of int
+int mut pc, sp
+
+void(mut int*, mut int*, mut int, mut int)* mut dispatcher = alloc TOTAL_INST_COUNT of void(mut int*, mut int*, mut int, mut int)
+
+void push(int* mut stack, int mut sp, int v):
+  #(stack + sp) = v
+  sp = sp + 1
+
+int pop(int* mut stack, int mut sp):
+  sp = sp - 1
+  return #(stack + sp)
+
+void handlePUSH(int* mut bytecode, stack, int mut pc, sp):
+  int val = #(bytecode + pc)
+  pc = pc + 1
+  push(stack, sp, val)
+#(dispatcher + PUSH) = handlePUSH
+
+void handleADD(int* mut bytecode, stack, int mut pc, sp):
+  int b = pop(stack, sp)
+  int a = pop(stack, sp)
+  push(stack, sp, a + b)
+#(dispatcher + ADD) = handleADD
+
+void handleSUB(int* mut bytecode, stack, int mut pc, sp):
+  int b = pop(stack, sp)
+  int a = pop(stack, sp)
+  push(stack, sp, a - b)
+#(dispatcher + SUB) = handleSUB
+
+void handleMUL(int* mut bytecode, stack, int mut pc, sp):
+  int b = pop(stack, sp)
+  int a = pop(stack, sp)
+  push(stack, sp, a * b)
+#(dispatcher + MUL) = handleMUL
+
+void handleDIV(int* mut bytecode, stack, int mut pc, sp):
+  int b = pop(stack, sp)
+  int a = pop(stack, sp)
+  push(stack, sp, a / b)
+#(dispatcher + DIV) = handleDIV
+
+void handleNEG(int* mut bytecode, stack, int mut pc, sp):
+  int a = pop(stack, sp)
+  push(stack, sp, -a)
+#(dispatcher + NEG) = handleNEG
+
+void handleHALT(int* mut bytecode, stack, int mut pc, sp):
+  pc = bytecodeSize
+#(dispatcher + HALT) = handleHALT
+
+void step(int* mut bytecode, stack, int mut pc, sp):
+  int inst = #(bytecode + pc)
+  pc = pc + 1
+  (#(dispatcher + inst))(bytecode, stack, pc, sp)
+
+int mut i = 0
+wr(bytecode, i, PUSH, 10)
+wr(bytecode, i, PUSH, 20)
+wr(bytecode, i, PUSH, 30)
+wr(bytecode, i, ADD)
+wr(bytecode, i, MUL)
+wr(bytecode, i, PUSH, 1)
+wr(bytecode, i, NEG)
+wr(bytecode, i, MUL)
+wr(bytecode, i, PUSH, 1200)
+wr(bytecode, i, ADD)
+wr(bytecode, i, HALT)
+
+while pc < i:
+  step(bytecode, stack, pc, sp)
+
+int a = #stack
