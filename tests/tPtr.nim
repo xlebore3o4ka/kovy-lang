@@ -123,6 +123,102 @@ void* p = alloc 4 of void
 """)
     check kinds(a) == @[errAllocVoid]
 
+  test "alloc inside a loop is rejected":
+    let a = analyze("""
+int mut i = 0
+while i < 3:
+  int* p = alloc 4 of int
+  i = i + 1
+""")
+    check kinds(a) == @[errAllocInLoop]
+
+  test "alloc inside a branch in a loop is rejected":
+    let a = analyze("""
+int mut i = 0
+while i < 3:
+  if i == 0:
+    int* p = alloc 4 of int
+  i = i + 1
+""")
+    check kinds(a) == @[errAllocInLoop]
+
+  test "alloc outside a loop is allowed":
+    let a = analyze("""
+int* p = alloc 4 of int
+int mut i = 0
+while i < 3:
+  i = i + 1
+""")
+    check a.errors.len == 0
+
+  test "alloc inside a function declared in a loop is allowed":
+    let a = analyze("""
+int mut i = 0
+while i < 3:
+  void inner():
+    int* p = alloc 4 of int
+  inner()
+  i = i + 1
+""")
+    check a.errors.len == 0
+
+suite "array literals":
+  test "allocates and fills an int array":
+    let a = analyze("""
+int* p = [1, 2, 3]
+""")
+    check a.errors.len == 0
+    check "kovyRuntime.kovyArrayLit(3, int, 1, 2, 3)" in a.generated
+
+  test "uses the explicit element type":
+    let a = analyze("""
+int* p = [1, 2] of int
+""")
+    check a.errors.len == 0
+    check "kovyRuntime.kovyArrayLit(2, int, 1, 2)" in a.generated
+
+  test "infers bool elements":
+    let a = analyze("""
+bool* p = [true, false]
+""")
+    check a.errors.len == 0
+    check "kovyRuntime.kovyArrayLit(2, bool, true, false)" in a.generated
+
+  test "empty array literal":
+    let a = analyze("""
+int* p = [] of int
+""")
+    check a.errors.len == 0
+    check "kovyRuntime.kovyArrayLit(0, int)" in a.generated
+
+  test "array of function values":
+    let a = analyze("""
+void hello():
+  int mut x = 1
+void()* p = [hello] of void()
+""")
+    check a.errors.len == 0
+    check "kovyRuntime.kovyArrayLit(1, proc (): void, helloza1)" in a.generated
+    check "ptr (proc (): void)" in a.generated
+
+  test "mutable pointer allows writing through an element":
+    let a = analyze("""
+int* mut p = [1, 2]
+#p = 3
+""")
+    check a.errors.len == 0
+    check "var p: ptr int = kovyRuntime.kovyArrayLit(2, int, 1, 2)" in a.generated
+    check "(p)[] = 3" in a.generated
+
+  test "nested array literals":
+    let a = analyze("""
+int** p = [[1, 2], [3, 4]] of int*
+""")
+    check a.errors.len == 0
+    check "kovyRuntime.kovyArrayLit(2, ptr int, " in a.generated
+    check "kovyRuntime.kovyArrayLit(2, int, 1, 2)" in a.generated
+    check "kovyRuntime.kovyArrayLit(2, int, 3, 4)" in a.generated
+
 suite "dereference":
   test "mutable pointer variable":
     let a = analyze("""
@@ -371,15 +467,56 @@ bool bad(int* a, int* b):
 """)
     check kinds(a) == @[errBinaryMismatch]
 
+suite "function pointers":
+  # As in C, prefix `#` binds looser than a postfix call: `#p()` means
+  # `#(p())`. To call through a function pointer, use `(#p)()`.
+  test "call through a function pointer":
+    let a = analyze("""
+void hello():
+  int mut x = 1
+
+void()* mut dispatch = alloc 1 of void()
+#dispatch = hello
+(#dispatch)()
+""")
+    check a.errors.len == 0
+    check "cast[ptr (proc (): void)]" in a.generated
+    check "kovyAllocaZeroed((1) * sizeof(proc (): void))" in a.generated
+    check "(dispatch)[] = helloza1" in a.generated
+    check "(dispatch)[]()" in a.generated
+
+  test "call through pointer arithmetic":
+    let a = analyze("""
+void hello():
+  int mut x = 1
+
+void()* mut dispatch = alloc 2 of void()
+#(dispatch + 1) = hello
+(#(dispatch + 1))()
+""")
+    check a.errors.len == 0
+    check "(dispatch + 1)[] = helloza1" in a.generated
+    check "(dispatch + 1)[]()" in a.generated
+
+  test "unparenthesized call is parsed inside the dereference":
+    let a = analyze("""
+void()* p
+int i = 0
+#(p + i)()
+""")
+    check kinds(a) == @[errNotCallable]
+
 suite "runtime names":
   test "user symbols colliding with syskovy names are escaped":
     let a = analyze("""
 int kovyruntime = 1
 int kovyalloca = 2
-int syskovy = 3
+int kovyarraylit = 3
+int syskovy = 4
 """)
     check a.errors.len == 0
-    check " as kovyRuntime except kovyAlloca" in a.generated
+    check " except kovyAlloca, kovyAllocaZeroed, kovyArrayLit" in a.generated
     check "zkovyruntime" in a.generated
     check "zkovyalloca" in a.generated
+    check "zkovyarraylit" in a.generated
     check "zsyskovy" in a.generated

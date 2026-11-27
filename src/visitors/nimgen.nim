@@ -44,7 +44,7 @@ const nimKeywords = [
 ]
 
 const reservedNames = [
-  "kovyRuntime", "kovyAlloca", "syskovy"
+  "kovyRuntime", "kovyAlloca", "kovyAllocaZeroed", "kovyArrayLit", "syskovy"
 ]
 
 proc identKey(sym: string): string =
@@ -229,8 +229,21 @@ proc nimType(self: Nimgen, typ: Type, token: Token): string =
 proc visit*(self: Nimgen, node: Alloc): string =
   let elem = self.nimType(node.elemType, node.token)
   let ptrType = self.nimType(newPtrType(node.elemType), node.token)
-  emit "cast[", ptrType, "](kovyRuntime.kovyAlloca((",
+  # Function values are Nim closures, so their storage must be initialized
+  # before assignment. Plain value types can stay uninitialized like C.
+  let alloca =
+    if node.elemType.kind == typeFunc: "kovyAllocaZeroed"
+    else: "kovyAlloca"
+  emit "cast[", ptrType, "](kovyRuntime.", alloca, "((",
        self.visit(node.count), ") * sizeof(", elem, ")))"
+
+proc visit*(self: Nimgen, node: ArrayLit): string =
+  let elem = self.nimType(node.elemType, node.token)
+  var elements: seq[string]
+  for element in node.elements:
+    elements.add self.visit(element)
+  emit "kovyRuntime.kovyArrayLit(", $node.elements.len, ", ", elem,
+       (if elements.len > 0: ", " & elements.join(", ") else: ""), ")"
 
 proc visit*(self: Nimgen, node: Decl): string =
   let typ = self.nimType(node.typ, node.token)
@@ -293,6 +306,7 @@ proc visit*(self: Nimgen, node: Expr): string =
   of nkUnary:  self.visit(Unary(node))
   of nkCall:   self.visit(Call(node))
   of nkAlloc:  self.visit(Alloc(node))
+  of nkArrayLit: self.visit(ArrayLit(node))
   else: ""
 
 proc visit*(self: Nimgen, node: Stmt): string =
@@ -310,5 +324,5 @@ proc visit*(self: Nimgen, node: Stmt): string =
 
 proc emit*(ng: Nimgen, node: Node): string =
   emit "import \"", ng.syskovyPath.replace('\\', '/'),
-       "\" as kovyRuntime except kovyAlloca\n\n"
+       "\" as kovyRuntime except kovyAlloca, kovyAllocaZeroed, kovyArrayLit\n\n"
   emit "block", ng.visit(Block(node))

@@ -24,6 +24,7 @@ type
     nkReturn
     nkCall
     nkAlloc
+    nkArrayLit
 
   Node* = ref object of RootObj
     kind*: NodeKind
@@ -81,6 +82,10 @@ type
   Alloc* = ref object of Expr
     count*: Expr
     elemType*: Type
+  ArrayLit* = ref object of Expr
+    elements*: seq[Expr]
+    hasElemType*: bool         # an explicit `of T` was written
+    elemType*: Type            # element type from `of T`
 
 proc newInvalidStmt*(token: Token): Stmt =
   InvalidStmt(kind: nkInvalid, token: token)
@@ -172,6 +177,17 @@ proc newCall*(token: Token, value: Expr, arguments: seq[Expr]): Call =
 proc newAlloc*(token: Token, count: Expr, elemType: Type): Alloc =
   Alloc(kind: nkAlloc, token: token, count: count, elemType: elemType)
 
+proc newArrayLit*(token: Token, elements: seq[Expr], elemType: Type,
+                  hasElemType: bool): ArrayLit =
+  ArrayLit(kind: nkArrayLit, token: token, elements: elements,
+           elemType: elemType, hasElemType: hasElemType)
+
+proc newArrayLit*(token: Token, elements: seq[Expr]): ArrayLit =
+  newArrayLit(token, elements, Type(), false)
+
+proc newArrayLit*(token: Token, elements: seq[Expr], elemType: Type): ArrayLit =
+  newArrayLit(token, elements, elemType, true)
+
 proc addElif*(s: var seq[tuple[cond: Expr, elifThen: Block]],
               cond: Expr, elifThen: Block) =
   s.add((cond: cond, elifThen: elifThen))
@@ -207,6 +223,10 @@ proc toStr*(expr: Expr): string =
       if a.count.kind == nkBinary: "(" & a.count.toStr & ")"
       else: a.count.toStr
     "alloc " & count & " of " & a.elemType.toStr
+  of nkArrayLit:
+    let a = ArrayLit(expr)
+    "[" & a.elements.mapIt(it.toStr).join(", ") & "]" &
+      (if a.hasElemType: " of " & a.elemType.toStr else: "")
   else: ""
 
 proc toStr*(stmt: Stmt): string =

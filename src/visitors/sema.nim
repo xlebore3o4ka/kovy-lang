@@ -1,6 +1,6 @@
 import ../[ast, types, errors]
 import ../parser/tokens
-import std/[tables, strutils]
+import std/[editdistance, tables, strutils]
 
 type
   Sym = object
@@ -75,9 +75,14 @@ proc popScope(self: Sema) =
   discard self.contextScopeStack.pop()
 
 proc isLoopContext(self: Sema): bool =
-  for scope in self.contextScopeStack:
-    if scope.kind == cskLoop:
-      return true
+  # A function body is a separate execution context: `break`, `continue`, and
+  # `alloc` inside a nested function do not belong to the enclosing loop, even
+  # if the function itself is declared in that loop.
+  for i in countdown(self.contextScopeStack.high, 0):
+    case self.contextScopeStack[i].kind
+    of cskLoop: return true
+    of cskFunc: return false
+    else: discard
   return false
 
 proc isFuncContext(self: Sema): bool =
@@ -108,8 +113,20 @@ proc getGlobalOverloads(self: Sema, name: string): seq[Overload] =
       return self.overloadTable[name]
   return @[]
 
+const maxSuggestionDistance = 2
+
 proc suggestName(self: Sema, name: string): string =
-  return "<not-implemented-yet>"
+  var bestDistance = high(int)
+  for candidate, scopes in self.symbolScopeStack:
+    if scopes.len == 0 or candidate == name:
+      continue
+    let distance = editDistance(name, candidate)
+    if distance < bestDistance or
+        (distance == bestDistance and candidate < result):
+      bestDistance = distance
+      result = candidate
+  if bestDistance > maxSuggestionDistance:
+    result = ""
 
 proc symbolExistsInScope(self: Sema, name: string): bool =
   let exists = name in self.currentScope.symbolTable
@@ -560,6 +577,12 @@ proc visit*(self: Sema, node: Alloc): Type =
   # Freshly allocated memory is not writable by itself: write access must come
   # from a mutable pointer symbol that stores the result.
   node.grantsWrite = false
+
+  var inLoop = false
+  if self.isLoopContext():
+    self.newError(node, errAllocInLoop)
+    inLoop = true
+
   let countT = self.visit(node.count)
   self.handleErrorType(countT)
 
@@ -574,7 +597,72 @@ proc visit*(self: Sema, node: Alloc): Type =
     self.newError(node.count, errAllocCount, diagnosticTypeStr(countT))
     return newErrorType()
 
+  if inLoop:
+    return newErrorType()
+
   return newPtrType(node.elemType)
+
+proc visit*(self: Sema, node: ArrayLit): Type =
+  # An array literal allocates storage, so it is not writable by itself.
+  node.grantsWrite = false
+
+  var failed = false
+  if self.isLoopContext():
+    self.newError(node, errAllocInLoop)
+    failed = true
+
+  var elemType: Type
+  var firstUnchecked = 0
+
+  if node.hasElemType:
+    elemType = node.elemType
+    if elemType.kind == typeError:
+      return newErrorType()
+    if elemType.kind == typeVoid:
+      self.newError(node, errAllocVoid)
+      return newErrorType()
+  elif node.elements.len == 0:
+    self.newError(node, errArrayTypeRequired)
+    return newErrorType()
+  else:
+    elemType = self.visit(node.elements[0])
+    if elemType.kind == typeError:
+      return elemType
+
+    while elemType.kind == typeMutable:
+      elemType = elemType.args[0]
+
+    if elemType.kind == typeNumberLit:
+      elemType = newIntType()
+    elif elemType.kind == typeBoolLit:
+      elemType = newBoolType()
+    elif elemType.kind == typeVoid:
+      self.newError(node.elements[0], errAllocVoid)
+      return newErrorType()
+
+    firstUnchecked = 1
+
+  # Store the inferred or explicit element type for code generation. The
+  # `hasElemType` flag still records whether `of T` was written in the source.
+  node.elemType = elemType
+
+  for i in firstUnchecked ..< node.elements.len:
+    let element = node.elements[i]
+    let typ = self.visitExpected(element, elemType)
+
+    if typ.kind == typeError:
+      failed = true
+      continue
+
+    if not self.fits(typ, elemType):
+      self.newError(element, errDoesNotFit, diagnosticTypeStr(typ),
+                   diagnosticTypeStr(elemType))
+      failed = true
+
+  if failed:
+    return newErrorType()
+
+  return newPtrType(elemType)
 
 proc visit*(self: Sema, node: Block): bool =
   var unreachableFounder: Stmt
@@ -961,6 +1049,7 @@ proc visit*(self: Sema, node: Expr): Type =
   of nkUnary:  result = self.visit(Unary(node))
   of nkCall:   result = self.visit(Call(node))
   of nkAlloc:  result = self.visit(Alloc(node))
+  of nkArrayLit: result = self.visit(ArrayLit(node))
   else: result = newErrorType()
 
 proc visit*(self: Sema, node: Stmt): bool =

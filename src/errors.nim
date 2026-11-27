@@ -32,6 +32,8 @@ type
 
     errAllocCount
     errAllocVoid
+    errAllocInLoop
+    errArrayTypeRequired
     errDerefNonPointer
     errAddrFromImmutable
     errNonConcreteType
@@ -141,4 +143,8 @@ proc formatError*(ctx: ErrorContext, ft: FileTracker, err: Error): string =
   result.add "  V " & " ".repeat(err.col - 1) & marker.repeat(err.length) & "\n"
   result.add ctx.formatPlaceholders(ft, data.message, err.placeholders) & "\n"
   if data.addinfo != "":
-    result.add "  " & ctx.formatPlaceholders(ft, data.addinfo, err.placeholders)
+    let addinfo = ctx.formatPlaceholders(ft, data.addinfo, err.placeholders)
+    # A "did you mean" suggestion is optional: there may be no close symbol.
+    if err.kind != errUnknownSymbol or
+        (err.placeholders.len > 1 and err.placeholders[1].len > 0):
+      result.add "  " & addinfo

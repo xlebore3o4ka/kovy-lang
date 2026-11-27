@@ -101,6 +101,41 @@ proc parseType(self: Parser): Type =
       discard self.nextToken()
       result = newPtrType(result)
 
+proc parseAlloc(self: Parser, t: Token): Expr =
+  if self.peekToken().isType():
+    let typ = self.parseType()
+    return t.newAlloc(Token(kind: tkNumber, lexeme: "1", line: t.line, col: t.col, file: t.file)
+      .newNumber(), typ)
+  else:
+    let expr = self.parseExpr(t)
+    discard self.expect(tkOf, "alloc " & expr.toStr() & " of T").ifUnexpected:
+      return it.newInvalidExpr()
+    let typ = self.parseType()
+
+    return t.newAlloc(expr, typ)
+
+proc parseArrayLit(self: Parser, t: Token): Expr =
+  var elements: seq[Expr] = @[]
+
+  while self.peekToken().kind notin {tkEOF, tkEOS, tkDedent, tkRBracket}:
+    elements.add self.parseExpr(t)
+    if self.peekToken().kind in {tkEOF, tkEOS, tkDedent, tkRBracket}:
+      break
+    discard self.expect(tkComma,
+      elements[^1].toStr() & ", " & self.peekToken().lexeme & "...").ifUnexpected:
+      return it.newInvalidExpr()
+
+  discard self.expect(tkRBracket,
+    "[ ... ] " & self.peekToken().lexeme).ifUnexpected:
+    return it.newInvalidExpr()
+
+  if self.peekToken().kind == tkOf:
+    discard self.nextToken()
+    let typ = self.parseType()
+    return t.newArrayLit(elements, typ)
+
+  return t.newArrayLit(elements)
+
 proc parsePrimary(self: Parser, prevToken: Token): Expr =
   let t = self.nextToken()
 
@@ -124,17 +159,9 @@ proc parsePrimary(self: Parser, prevToken: Token): Expr =
   elif t.kind == tkFalse:
     return t.newBool(false)
   elif t.kind == tkAlloc:
-    if self.peekToken().isType():
-      let typ = self.parseType()
-      return t.newAlloc(Token(kind: tkNumber, lexeme: "1", line: t.line, col: t.col, file: t.file)
-        .newNumber(), typ)
-    else:
-      let expr = self.parseExpr(t)
-      discard self.expect(tkOf, "alloc " & expr.toStr() & " of T").ifUnexpected:
-        return it.newInvalidExpr()
-      let typ = self.parseType()
-
-      return t.newAlloc(expr, typ)
+    return self.parseAlloc(t)
+  elif t.kind == tkLBracket:
+    return self.parseArrayLit(t)
   elif t.kind == tkInvalid:
     return t.newInvalidExpr()
 

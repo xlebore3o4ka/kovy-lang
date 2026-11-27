@@ -17,6 +17,9 @@ tokenKinds:
   tkLParen: "left-paren '('"
   tkRParen: "right-paren ')'"
 
+  tkLBracket: "left-bracket '['"
+  tkRBracket: "right-bracket ']'"
+
   tkComma: "comma ','"
 
   tkEquals: "equals operator '='"
@@ -78,6 +81,8 @@ registerOp tkStar,   "*"
 registerOp tkSlash,  "/"
 registerOp tkLParen, "("
 registerOp tkRParen, ")"
+registerOp tkLBracket, "["
+registerOp tkRBracket, "]"
 registerOp tkComma,  ","
 registerOp tkEquals, "="
 registerOp tkGt,     ">"

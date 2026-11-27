@@ -147,6 +147,14 @@
     "message": "Cannot allocate elements of type void",
     "addinfo": ""
   },
+  "errAllocInLoop": {
+    "message": "Cannot allocate memory inside a loop",
+    "addinfo": "Allocate the buffer once before the loop and reuse it"
+  },
+  "errArrayTypeRequired": {
+    "message": "Cannot infer the element type of an empty array literal",
+    "addinfo": "Add an element or specify the element type with `of T`"
+  },
   "errDerefNonPointer": {
     "message": "Cannot dereference a non-pointer value of type @c0",
     "addinfo": ""
