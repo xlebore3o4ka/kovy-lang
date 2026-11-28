@@ -621,14 +621,23 @@
 
   const tocLinks = [...document.querySelectorAll(".toc-link")];
   if (tocLinks.length) {
-    const targets = tocLinks
-      .map((link) => {
-        const href = link.getAttribute("href") || "";
-        const id = href.startsWith("#") ? href.slice(1) : "";
-        const element = id ? document.getElementById(id) : null;
-        return element ? { link, element } : null;
-      })
-      .filter(Boolean);
+    // The same heading can be linked from the desktop TOC and the mobile
+    // "On this page" block, so group links by target instead of treating
+    // every link as a separate target.
+    const targetById = new Map();
+    tocLinks.forEach((link) => {
+      const href = link.getAttribute("href") || "";
+      const id = href.startsWith("#") ? href.slice(1) : "";
+      const element = id ? document.getElementById(id) : null;
+      if (!element) return;
+      let target = targetById.get(id);
+      if (!target) {
+        target = { element, links: [] };
+        targetById.set(id, target);
+      }
+      target.links.push(link);
+    });
+    const targets = [...targetById.values()];
 
     let ticking = false;
 
@@ -646,9 +655,11 @@
       }
       targets.forEach((target) => {
         const selected = target === active;
-        target.link.classList.toggle("is-active", selected);
-        if (selected) target.link.setAttribute("aria-current", "location");
-        else target.link.removeAttribute("aria-current");
+        target.links.forEach((link) => {
+          link.classList.toggle("is-active", selected);
+          if (selected) link.setAttribute("aria-current", "location");
+          else link.removeAttribute("aria-current");
+        });
       });
     };
 

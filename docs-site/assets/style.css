@@ -383,6 +383,7 @@ kbd {
   width: var(--sidebar-width);
   height: calc(100vh - var(--topbar-height));
   overflow-y: auto;
+  overscroll-behavior-y: contain;
   padding: 20px 13px 28px;
   border-right: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg) 55%, transparent);
@@ -1044,6 +1045,7 @@ kbd {
   top: calc(var(--topbar-height) + 38px);
   max-height: calc(100vh - var(--topbar-height) - 70px);
   overflow-y: auto;
+  overscroll-behavior-y: contain;
   padding-bottom: 20px;
   scrollbar-width: thin;
   scrollbar-color: var(--surface-3) transparent;

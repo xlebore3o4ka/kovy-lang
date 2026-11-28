@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import html
 import json
 import os
@@ -54,6 +55,16 @@ ASSET_VERSION = (
     or os.environ.get("GITHUB_SHA")
     or BUILD_DATE
 )[:12]
+
+
+def compute_asset_version(docs: Path) -> str:
+    """Short content hash so a rebuild always busts CSS/JS/search caches."""
+    digest = hashlib.sha1()
+    for name in ("style.css", "app.js"):
+        digest.update((PROJECT_DIR / "assets" / name).read_bytes())
+    for source in sorted(docs.rglob("*.md")):
+        digest.update(source.read_bytes())
+    return digest.hexdigest()[:12]
 
 
 # ---------------------------------------------------------------------------
@@ -286,6 +297,7 @@ NAV_GROUPS = [
         "reference",
         [
             "reference/keywords.md",
+            "reference/cli.md",
             "reference/tokens.md",
             "reference/operators.md",
             "reference/precedence.md",
@@ -967,9 +979,14 @@ def home_page(groups: list[tuple[str, list[Page]]], pages: dict[str, Page], exam
             group_card(
                 "reference",
                 "Look up a rule",
-                "Keywords, tokens, operators, precedence and compatibility tables.",
+                "Keywords, tokens, operators, CLI commands, precedence and compatibility tables.",
                 "reference/keywords.md",
-                ["reference/keywords.md", "reference/operators.md", "reference/syntax-index.md"],
+                [
+                    "reference/keywords.md",
+                    "reference/cli.md",
+                    "reference/operators.md",
+                    "reference/syntax-index.md",
+                ],
             ),
             group_card(
                 "errors",
@@ -1139,7 +1156,7 @@ def copy_assets(project: Path, out_dir: Path) -> None:
 
 
 def main() -> None:
-    global SITE_URL, DOCS_VERSION, BUILD_DATE
+    global SITE_URL, DOCS_VERSION, BUILD_DATE, ASSET_VERSION
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--docs", type=Path, default=DEFAULT_DOCS)
@@ -1169,6 +1186,9 @@ def main() -> None:
     out_dir: Path = args.out.resolve()
     if not docs.is_dir():
         raise SystemExit(f"docs directory not found: {docs}")
+
+    if not os.environ.get("KOVY_ASSET_VERSION") and not os.environ.get("GITHUB_SHA"):
+        ASSET_VERSION = compute_asset_version(docs)
 
     if out_dir.exists():
         shutil.rmtree(out_dir)
