@@ -174,12 +174,23 @@ def _severity(value):
     }.get(str(value or "").lower(), 1)
 
 
+def _report_int(diagnostic, key, default):
+    try:
+        return int(diagnostic.get(key, default))
+    except (TypeError, ValueError):
+        return default
+
+
 def _to_lsp_diagnostic(diagnostic, text):
     if not isinstance(diagnostic, dict):
         raise ValueError("diagnostic is not an object")
 
-    message = str(diagnostic.get("message") or "")
+    # The LSP message is what hover popups and the status bar display, so it
+    # includes the optional addinfo.  The original message and addinfo are
+    # also kept separately in `data` for clients that render their own panel.
+    message_text = str(diagnostic.get("message") or "")
     addinfo = str(diagnostic.get("addinfo") or "").strip()
+    message = message_text
     if addinfo:
         message = message + "\n\n" + addinfo
 
@@ -195,6 +206,12 @@ def _to_lsp_diagnostic(diagnostic, text):
     result["data"] = {
         "kind": kind,
         "phase": diagnostic.get("phase"),
+        "severity": diagnostic.get("severity"),
+        "message": message_text,
+        "addinfo": addinfo,
+        "line": _report_int(diagnostic, "line", 0),
+        "column": _report_int(diagnostic, "column", 0),
+        "length": _report_int(diagnostic, "length", 0),
         "sourceLine": diagnostic.get("sourceLine"),
     }
     return result

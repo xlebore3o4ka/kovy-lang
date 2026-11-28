@@ -62,9 +62,16 @@ Each diagnostic has:
 |---|---|
 | `source` | `kovy` |
 | `code` | Kovy `ErrorKind`, for example `errUnknownSymbol` |
-| `message` | Localized message plus `addinfo` |
-| `data.kind`, `data.phase` | Kovy metadata for future features |
+| `message` | Localized message plus `addinfo`, separated by a blank line |
+| `data.kind`, `data.phase`, `data.severity` | Kovy metadata |
+| `data.message` | The localized message without `addinfo` |
+| `data.addinfo` | The localized `addinfo`, or an empty string |
+| `data.line`, `data.column`, `data.length` | 1-based Kovy location from the JSON report |
 | `data.sourceLine` | The original source line from the report |
+
+Keeping the clean message and `addinfo` separately in `data` lets a client
+render its own diagnostic panel in the compiler's original layout while hover
+popups and the status bar still show the combined `message`.
 
 ## Configuration
 
@@ -101,33 +108,41 @@ Each diagnostic has:
 `workspace/didChangeConfiguration` accepts the same keys.  Changing the
 configuration or workspace folders re-checks every open document.
 
-## Sublime Text with the LSP package
+## Sublime Text
 
-If the `LSP` package is installed, add this to **Preferences: LSP Settings**
-(or to `Packages/User/LSP.sublime-settings`):
+Install the **LSP** package from Package Control, then install the **Kovy**
+Sublime package from [`editors/sublime/Kovy`](../sublime/Kovy/README.md).
+The Kovy package registers this server through the `LspPlugin` API and reads
+`Packages/Kovy/Kovy.sublime-settings`; no manual client entry is needed in
+`LSP.sublime-settings`.
+
+The package starts the server with:
+
+```json
+"command": ["$kovy_python", "$kovy_server", "--stdio"],
+"selector": "source.kovy",
+"schemes": ["file", "buffer"]
+```
+
+`$kovy_python` is auto-detected (`python3` or `python`) and
+`$kovy_server` points at this file.  The compiler is auto-detected by the
+server, or can be set with `kovy_executable` / `initialization_options.kovyPath`.
+
+### Other LSP clients
+
+Other editors can start the server directly:
 
 ```json
 {
-  "clients": {
-    "kovy": {
-      "enabled": true,
-      "command": [
-        "python3",
-        "/absolute/path/to/kovy-lang/editors/lsp/kovy_lsp.py"
-      ],
-      "selector": "source.kovy",
-      "initializationOptions": {
-        "kovyPath": "/absolute/path/to/kovy-lang/bin/kovy",
-        "noNimgen": false,
-        "debounceMs": 300
-      }
-    }
+  "command": ["python3", "/absolute/path/to/kovy-lang/editors/lsp/kovy_lsp.py", "--stdio"],
+  "selector": "source.kovy",
+  "initializationOptions": {
+    "kovyPath": "/absolute/path/to/kovy-lang/bin/kovy",
+    "noNimgen": false,
+    "debounceMs": 300
   }
 }
 ```
-
-Do not enable both this client and the standalone **Kovy** Sublime package at
-the same time if you do not want two independent sets of markers.
 
 ## Error reporting
 

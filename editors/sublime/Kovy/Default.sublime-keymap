@@ -1,0 +1,58 @@
+[
+  // Insert a newline and add one indentation level after a block-opening `:`.
+  // Fall through to the normal Enter behaviour in completions and snippets.
+  {
+    "keys": ["enter"],
+    "command": "kovy_enter",
+    "context": [
+      { "key": "selector", "operator": "equal", "operand": "source.kovy" },
+      { "key": "setting.kovy_smart_enter", "operator": "equal", "operand": true },
+      { "key": "auto_complete_visible", "operator": "equal", "operand": false },
+      { "key": "has_next_field", "operator": "equal", "operand": false },
+      { "key": "has_prev_field", "operator": "equal", "operand": false }
+    ]
+  },
+
+  // Toggle the dynamic details panel for the diagnostic under the caret.
+  {
+    "keys": ["primary+alt+k"],
+    "command": "kovy_show_details",
+    "context": [
+      { "key": "selector", "operator": "equal", "operand": "source.kovy" }
+    ]
+  },
+
+  // LSP diagnostic navigation.
+  {
+    "keys": ["f4"],
+    "command": "lsp_next_diagnostic",
+    "context": [
+      { "key": "selector", "operator": "equal", "operand": "source.kovy" },
+      { "key": "setting.lsp_active" }
+    ]
+  },
+  {
+    "keys": ["shift+f4"],
+    "command": "lsp_prev_diagnostic",
+    "context": [
+      { "key": "selector", "operator": "equal", "operand": "source.kovy" },
+      { "key": "setting.lsp_active" }
+    ]
+  },
+
+  // Kovy has no comments; `#` is the dereference operator.
+  {
+    "keys": ["primary+/"],
+    "command": "kovy_no_comments",
+    "context": [
+      { "key": "selector", "operator": "equal", "operand": "source.kovy" }
+    ]
+  },
+  {
+    "keys": ["primary+shift+/"],
+    "command": "kovy_no_comments",
+    "context": [
+      { "key": "selector", "operator": "equal", "operand": "source.kovy" }
+    ]
+  }
+]
