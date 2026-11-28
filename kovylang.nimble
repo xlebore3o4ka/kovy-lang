@@ -6,7 +6,7 @@ description   = "-"
 license       = "AGPL-3.0"
 srcDir        = "src"
 binDir        = "bin"
-bin           = @["kovylang"]
+bin           = @["kovy"]
 
 
 # Dependencies

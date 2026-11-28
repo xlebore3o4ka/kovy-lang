@@ -19,6 +19,7 @@ link to it without depending on heading text or line numbers.
 - [Pointers](language/pointers.md#KOVY-POINTERS)
 - [Arrays](language/arrays.md#KOVY-ARRAYS)
 - [Error catalogue](errors/index.md#KOVY-ERRORS-INDEX)
+- [Command-line interface](reference/cli.md#REF-CLI)
 
 ## Conventions
 

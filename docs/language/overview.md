@@ -70,8 +70,10 @@ See [pointers](pointers.md#KOVY-POINTERS) for the current memory rules.
    later type checker or linker.
 
 The reusable pipeline is documented in [pipeline](pipeline.md#KOVY-PIPELINE).
-`src/kovylang.nim` is currently a small hard-coded demonstration program, not
-a general file-compiling command-line driver.
+The user-facing `kovy` executable provides `check`, which reports diagnostics;
+`emit`, which writes generated Nim plus the `syskovy.nim` runtime; and `build`,
+which additionally runs the Nim compiler on the generated source. See
+[REF-CLI](../reference/cli.md#REF-CLI).
 
 ## Reading this reference
 

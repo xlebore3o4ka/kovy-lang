@@ -73,7 +73,8 @@ block:
 ```
 
 The path is backslash-normalized to `/`. `syskovyPath` defaults to
-`src/syskovy` relative to the nimgen source file.
+`src/syskovy` relative to the nimgen source file. `kovy emit` passes
+`./syskovy` so the generated file imports the runtime written next to it.
 
 Statements:
 

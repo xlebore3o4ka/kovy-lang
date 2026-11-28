@@ -23,7 +23,8 @@ errors.
    `src/visitors/nimgen.nim` returns a Nim source string.
 
 The generated Nim imports `src/syskovy.nim` and must still be compiled by Nim.
-Kovy itself does not invoke the Nim compiler, link the program, or run it.
+The Kovy front-end does not invoke the Nim compiler, link the program, or run
+it; `kovy build` is a separate wrapper that runs Nim on the generated source.
 
 <a id="SEM-PIPELINE-ERRORS"></a>
 ### Error accumulation and short-circuiting
@@ -81,22 +82,27 @@ else:
 must be used for formatting diagnostics, because an `Error` stores only a
 numeric file id.
 
-## Current command-line entry point
+## Command-line entry point
 
 <a id="SEM-PIPELINE-CLI"></a>
-`src/kovylang.nim` is not a general compiler driver. It compiles a hard-coded
-source string containing `int* arr = [1, 2, 3]` and prints either the generated
-Nim source or formatted diagnostics. In particular:
+The user-facing executable is `bin/kovy`, built from `src/kovy.nim`. The current
+command line provides `check`, `emit`, and `build`:
 
-- it accepts no source-file argument;
-- its lexer-error check runs before any token is requested;
-- it performs one parse and one sema visit;
-- it runs nimgen only if no prior error exists;
-- it prints generated source instead of writing or compiling a file.
+- all three accept a source file, `-`, or piped stdin;
+- all three load a locale from `error_locales` or from `--locale-path`;
+- all three run lexer, parser, sema, and `finalize`;
+- all three run `nimgen` when no earlier error exists; `check --no-nimgen` stops
+  after sema;
+- `check` prints formatted diagnostics to stderr;
+- `emit` writes generated Nim and `syskovy.nim`, or prints the Nim to stdout
+  with `-o -`;
+- `build` writes the generated files to a temporary directory and runs
+  `nim c` on them, optionally keeping the files with `--keep-nim`.
 
-The executable `bin/kovylang` is the build product of that program. The current
-source pipeline does not use `src/visitors/codegen.nim`; that file is an
-LLVM-oriented historical path marked postponed.
+The command line is documented in
+[REF-CLI](../reference/cli.md#REF-CLI). The current source pipeline does not use
+`src/visitors/codegen.nim`; that file is an LLVM-oriented historical path marked
+postponed.
 
 ## Generated source shape
 
@@ -137,7 +143,9 @@ all current `ErrorKind`s have keys.
   are discovered while the parser requests tokens.
 - Nimgen is the only stage with a source check that sema can pass and code
   generation can still reject: `void*`.
-- The command-line demonstration has no file input.
+- `kovy check` stops at diagnostics; `kovy emit` writes generated Nim but does
+  not compile it; `kovy build` writes it to a temporary directory and invokes
+  Nim.
 - The old LLVM code generator is not wired into the pipeline.
 - The parser and sema accept some programs that generated Nim rejects. Docs
   distinguish Kovy diagnostics from later Nim diagnostics.

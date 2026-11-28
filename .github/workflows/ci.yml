@@ -40,6 +40,38 @@ jobs:
       - name: Run test suite
         run: nimble test --hints:off --warnings:off
 
+      - name: Build CLI
+        run: nimble build --hints:off --warnings:off
+
+      - name: CLI smoke test
+        run: |
+          set -e
+          ./bin/kovy --version
+          ./bin/kovy --help > /dev/null
+          printf 'int x = 1\n' > "$RUNNER_TEMP/ok.kovy"
+          ./bin/kovy check "$RUNNER_TEMP/ok.kovy"
+          ./bin/kovy check --json "$RUNNER_TEMP/ok.kovy" > "$RUNNER_TEMP/ok.json"
+          python3 -c "import json,os; d=json.load(open(os.environ['RUNNER_TEMP']+'/ok.json')); assert d['schemaVersion']==1 and d['diagnostics']==[]"
+          set +e
+          printf 'int x = missing\n' | ./bin/kovy check -
+          status=$?
+          printf 'int x = missing\n' | ./bin/kovy check --json - > "$RUNNER_TEMP/bad.json"
+          json_status=$?
+          set -e
+          test "$status" -eq 1
+          test "$json_status" -eq 1
+          python3 -c "import json,os; d=json.load(open(os.environ['RUNNER_TEMP']+'/bad.json')); assert d['schemaVersion']==1 and len(d['diagnostics'])==1 and d['diagnostics'][0]['phase']=='sema'"
+          mkdir -p "$RUNNER_TEMP/emit"
+          ./bin/kovy emit "$RUNNER_TEMP/ok.kovy" -o "$RUNNER_TEMP/emit/ok.nim"
+          test -f "$RUNNER_TEMP/emit/ok.nim"
+          test -f "$RUNNER_TEMP/emit/syskovy.nim"
+          grep -q 'import "./syskovy"' "$RUNNER_TEMP/emit/ok.nim"
+          nim c --hints:off --warnings:off -o:"$RUNNER_TEMP/emit/ok" "$RUNNER_TEMP/emit/ok.nim"
+          "$RUNNER_TEMP/emit/ok"
+          ./bin/kovy build "$RUNNER_TEMP/ok.kovy" -o "$RUNNER_TEMP/emit/ok-bin"
+          test -x "$RUNNER_TEMP/emit/ok-bin"
+          "$RUNNER_TEMP/emit/ok-bin"
+
   docs:
     name: Documentation check
     runs-on: ubuntu-latest

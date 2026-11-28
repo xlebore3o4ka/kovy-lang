@@ -116,6 +116,9 @@ Nimgen emits:
 import "<path>/src/syskovy" as kovyRuntime except kovyAlloca, kovyAllocaZeroed, kovyArrayLit
 ```
 
+For `kovy emit`, the import is `./syskovy` because the runtime is written next
+to the generated file.
+
 The helper calls are qualified as `kovyRuntime.<name>`. The exclusions ensure
 the unqualified macro/template names are not visible at the generated program's
 top level. User symbols that collide with runtime or module names are also

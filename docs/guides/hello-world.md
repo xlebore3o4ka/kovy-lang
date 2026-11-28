@@ -99,9 +99,10 @@ not stop compilation immediately. See
 
 ## What runs, and what does not
 
-The pipeline stops at generated Nim source. It does not invoke the Nim
-compiler, link a binary, or run the program. A host program must take the
-generated string and compile it. See
+The pipeline produces generated Nim source. `kovy check` reports diagnostics;
+`kovy emit` writes the generated `.nim` file and the `syskovy.nim` runtime;
+`kovy build` also invokes Nim to link a native binary. See the
+[CLI reference](../reference/cli.md#REF-CLI) and the
 [compilation pipeline](../language/pipeline.md#SEM-PIPELINE-STAGES).
 
 ## Next steps
