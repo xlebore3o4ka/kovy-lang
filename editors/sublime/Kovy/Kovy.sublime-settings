@@ -1,0 +1,19 @@
+{
+  "color_scheme": "Packages/Kovy/Kovy.sublime-color-scheme",
+  "tab_size": 2,
+  "translate_tabs_to_spaces": true,
+  "detect_indentation": false,
+  "word_wrap": false,
+  "ensure_newline_at_eof_on_save": true,
+
+  "kovy_executable": "kovy",
+  "kovy_check_on_open": true,
+  "kovy_check_on_save": true,
+  "kovy_check_on_type": true,
+  "kovy_check_delay_ms": 400,
+  "kovy_check_timeout_ms": 15000,
+  "kovy_check_no_nimgen": false,
+  "kovy_locale": "",
+  "kovy_locale_path": "",
+  "kovy_extra_args": []
+}

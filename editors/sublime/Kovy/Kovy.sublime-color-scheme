@@ -1,0 +1,216 @@
+{
+  "name": "Kovy",
+  "author": "Kovy",
+  "variables": {
+    "bg": "#080a0e",
+    "bg_soft": "#0e1117",
+    "surface": "#11151d",
+    "surface_2": "#171c26",
+    "surface_3": "#1d2430",
+    "fg": "#dbe0ea",
+    "fg_soft": "#b0b6c3",
+    "muted": "#747c8d",
+    "keyword": "#d3a1ff",
+    "type": "#8fb8ff",
+    "function": "#78d6c4",
+    "number": "#f2b07d",
+    "operator": "#9fb4d8",
+    "name": "#dbe0ea",
+    "string": "#a7d98a",
+    "comment": "#687184",
+    "accent": "#e8b76a",
+    "accent_ink": "#1b1306",
+    "red": "#f0928e",
+    "green": "#7fd3a4",
+    "blue": "#8fb8ff"
+  },
+  "globals": {
+    "background": "var(bg)",
+    "foreground": "var(name)",
+    "caret": "var(accent)",
+    "block_caret": "var(accent)",
+    "line_highlight": "var(surface)",
+    "selection": "#e8b76a1f",
+    "selection_border": "#e8b76a59",
+    "inactive_selection": "#171c2680",
+    "inactive_selection_foreground": "var(muted)",
+    "find_highlight": "var(accent)",
+    "find_highlight_foreground": "var(accent_ink)",
+    "misspelling": "var(red)",
+    "minimap_border": "var(accent)",
+    "invisibles": "#3a4252",
+    "gutter": "var(bg)",
+    "gutter_foreground": "#4f5869",
+    "gutter_foreground_highlight": "var(muted)",
+    "line_diff_added": "var(green)",
+    "line_diff_modified": "var(blue)",
+    "line_diff_deleted": "var(red)",
+    "brackets_foreground": "var(accent)",
+    "bracket_contents_foreground": "var(type)",
+    "tags_foreground": "var(function)"
+  },
+  "rules": [
+    {
+      "name": "Comment",
+      "scope": "comment",
+      "foreground": "var(comment)",
+      "font_style": "italic"
+    },
+    {
+      "name": "String",
+      "scope": "string",
+      "foreground": "var(string)"
+    },
+    {
+      "name": "Escape",
+      "scope": "constant.character.escape",
+      "foreground": "var(string)"
+    },
+    {
+      "name": "Number",
+      "scope": "constant.numeric",
+      "foreground": "var(number)"
+    },
+    {
+      "name": "Language constant",
+      "scope": "constant.language",
+      "foreground": "var(number)"
+    },
+    {
+      "name": "Character",
+      "scope": "constant.character",
+      "foreground": "var(string)"
+    },
+    {
+      "name": "Named constant",
+      "scope": "entity.name.constant, support.constant, constant.other",
+      "foreground": "var(number)"
+    },
+    {
+      "name": "Keyword",
+      "scope": "keyword",
+      "foreground": "var(keyword)"
+    },
+    {
+      "name": "Operator",
+      "scope": "keyword.operator",
+      "foreground": "var(operator)"
+    },
+    {
+      "name": "Type",
+      "scope": "storage.type, support.type, entity.name.type",
+      "foreground": "var(type)"
+    },
+    {
+      "name": "Function",
+      "scope": "entity.name.function, support.function",
+      "foreground": "var(function)"
+    },
+    {
+      "name": "Variable",
+      "scope": "variable, entity.name.variable",
+      "foreground": "var(name)"
+    },
+    {
+      "name": "Parameter",
+      "scope": "variable.parameter",
+      "foreground": "var(name)"
+    },
+    {
+      "name": "Function call",
+      "scope": "variable.function",
+      "foreground": "var(function)"
+    },
+    {
+      "name": "Punctuation",
+      "scope": "punctuation",
+      "foreground": "var(operator)"
+    },
+    {
+      "name": "Invalid",
+      "scope": "invalid",
+      "foreground": "var(red)"
+    },
+    {
+      "name": "HTML tag",
+      "scope": "entity.name.tag",
+      "foreground": "var(function)"
+    },
+    {
+      "name": "HTML attribute",
+      "scope": "entity.other.attribute-name",
+      "foreground": "var(number)"
+    },
+    {
+      "name": "Markup heading",
+      "scope": "markup.heading",
+      "foreground": "var(accent)",
+      "font_style": "bold"
+    },
+    {
+      "name": "Markup bold",
+      "scope": "markup.bold",
+      "font_style": "bold"
+    },
+    {
+      "name": "Markup italic",
+      "scope": "markup.italic",
+      "font_style": "italic"
+    },
+    {
+      "name": "Markup inserted",
+      "scope": "markup.inserted",
+      "foreground": "var(green)"
+    },
+    {
+      "name": "Markup deleted",
+      "scope": "markup.deleted",
+      "foreground": "var(red)"
+    },
+    {
+      "name": "Markup changed",
+      "scope": "markup.changed",
+      "foreground": "var(number)"
+    },
+    {
+      "name": "Modifier",
+      "scope": "storage.modifier",
+      "foreground": "var(keyword)"
+    },
+    {
+      "name": "Kovy declaration keyword",
+      "scope": "keyword.other.alloc.kovy, keyword.other.of.kovy, keyword.operator.address-of.kovy, keyword.operator.logical.kovy, storage.modifier.mutable.kovy",
+      "foreground": "var(keyword)"
+    },
+    {
+      "name": "Kovy pointer and dereference",
+      "scope": "storage.modifier.pointer.kovy, keyword.operator.dereference.kovy",
+      "foreground": "var(operator)"
+    },
+    {
+      "name": "Kovy boolean",
+      "scope": "constant.language.boolean.kovy",
+      "foreground": "var(number)"
+    },
+    {
+      "name": "Kovy function name",
+      "scope": "entity.name.function.kovy, entity.name.function.call.kovy",
+      "foreground": "var(function)"
+    },
+    {
+      "name": "Kovy parameter",
+      "scope": "variable.parameter.kovy",
+      "foreground": "var(name)"
+    },
+    {
+      "name": "Kovy variable",
+      "scope": "variable.other.kovy",
+      "foreground": "var(name)"
+    },
+    {
+      "name": "Kovy primitive type",
+      "scope": "storage.type.primitive.kovy",
+      "foreground": "var(type)"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+[
+  {
+    "caption": "Kovy: Check File",
+    "command": "kovy_check"
+  },
+  {
+    "caption": "Kovy: Show Diagnostics",
+    "command": "kovy_show_diagnostics"
+  },
+  {
+    "caption": "Kovy: Clear Diagnostics",
+    "command": "kovy_clear_diagnostics"
+  }
+]

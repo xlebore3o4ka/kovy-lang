@@ -1,0 +1,347 @@
+%YAML 1.2
+---
+# Kovy syntax definition for Sublime Text.
+#
+# This is not only a colorizer.  The grammar exposes structural contexts that a
+# future LSP client can use for semantic tokens, hover targets, call/parameter
+# detection, and "what construct is at the caret" queries.  It deliberately
+# does not fake Kovy's indentation parser: block bodies are indentation-driven
+# and belong to the parser/LSP, while this grammar identifies declarations,
+# signatures, call sites, control headers, arrays, and grouping.
+#
+# Scope contract:
+#   entity.name.function.kovy          function declaration name
+#   entity.name.function.call.kovy     function call target
+#   variable.parameter.kovy            function parameter
+#   variable.other.kovy                local/global value reference
+#   storage.type.primitive.kovy        int / bool / void
+#   storage.modifier.mutable.kovy      mut
+#   storage.modifier.pointer.kovy      * in a type expression
+#   keyword.other.alloc.kovy           alloc
+#   keyword.other.of.kovy              of
+#   keyword.operator.dereference.kovy  #
+#   keyword.operator.address-of.kovy   addr
+#   meta.declaration.kovy              declaration (type + names + init)
+#   meta.function.parameters.kovy      function parameter list
+#   meta.function-call.arguments.kovy  call argument list
+#   meta.type.function.kovy            function type argument list
+#   meta.control.kovy                  if/elif/else/while/return/break/continue
+#   meta.array.kovy                    array literal
+#   meta.grouping.kovy                 parenthesised expression
+#
+# LSP semantic-token mapping used by the client:
+#   entity.name.function.kovy         -> function
+#   entity.name.function.call.kovy    -> function
+#   variable.parameter.kovy           -> parameter
+#   variable.other.kovy               -> variable
+#   storage.type.primitive.kovy       -> type
+#   storage.modifier.*.kovy           -> modifier / operator
+#   keyword.*.kovy                    -> keyword / operator
+#   constant.numeric.*.kovy           -> number
+#   constant.language.boolean.kovy    -> keyword
+#   punctuation.*.kovy                -> not emitted as semantic tokens
+#   meta.*.kovy                       -> structural context, not a token
+#
+# Kovy has no comments, no string literals, and `#` is the dereference
+# operator, not a comment marker.  Do not add comment or string contexts.
+
+name: Kovy
+file_extensions:
+  - kovy
+scope: source.kovy
+version: 2
+
+variables:
+  ident: '[A-Za-z_][A-Za-z0-9_]*'
+  type_keyword: '(?:int|bool|void)'
+  control_keyword: '(?:if|elif|else|while|return|break|continue)'
+
+contexts:
+  main:
+    - include: statement-start
+    - match: ';'
+      scope: punctuation.terminator.statement.kovy
+    - match: ':'
+      scope: punctuation.section.block.begin.kovy
+    - match: ','
+      scope: punctuation.separator.kovy
+    - match: '[\)\]]'
+      scope: invalid.illegal.unexpected-bracket.kovy
+    - include: expression
+
+  # A statement starts at a line start, after a semicolon, or after the colon
+  # of an inline block.  Declarations and control statements get their own
+  # contexts; everything else is an expression statement.
+  statement-start:
+    - match: '(?:^|(?<=[;:\)]))[ \t]*(?={{type_keyword}}\b)'
+      push: declaration
+    - match: '(?:^|(?<=[;:\)]))[ \t]*(?={{control_keyword}}\b)'
+      push: control-statement
+
+  # type [mut] NAME [= expression] { , NAME [= expression] }
+  # or
+  # type [mut] NAME ( parameters ) [: block]
+  declaration:
+    - meta_scope: meta.declaration.kovy
+    - include: type
+    - match: '\b(mut)\b'
+      scope: storage.modifier.mutable.kovy
+    - match: '({{ident}})(?=[ \t]*\()'
+      captures:
+        1: entity.name.function.kovy
+      push: parameter-list
+    # A function declaration without `:` is a forward declaration.  The parser
+    # ends it even when the next statement starts on the same line, so release
+    # the declaration context after the parameter list before a same-line type
+    # or control keyword.
+    - match: '(?<=\))(?=[ \t]+({{type_keyword}}|{{control_keyword}})\b)'
+      pop: true
+    - match: '({{ident}})'
+      captures:
+        1: variable.other.kovy
+    - match: '='
+      scope: keyword.operator.assignment.kovy
+      push: expression
+    - match: ','
+      scope: punctuation.separator.declaration.kovy
+    - match: ':'
+      scope: punctuation.section.function.begin.kovy
+      pop: true
+    - match: ';'
+      scope: punctuation.terminator.statement.kovy
+      pop: true
+    - match: '(?=\n)'
+      pop: true
+    - match: '[^\s]'
+      scope: invalid.illegal.unexpected-character.kovy
+
+  # The function name is matched by `declaration`, so meta_content_scope here
+  # starts after the name and covers the actual parameter list.
+  parameter-list:
+    - meta_content_scope: meta.function.parameters.kovy
+    - match: '[ \t]+'
+    - match: '\('
+      scope: punctuation.section.parameters.begin.kovy
+      push: parameters
+    - match: '(?=[\s\S])'
+      pop: true
+
+  # Parameters are type-oriented.  A comma may continue the current type group
+  # (`int a, b`) or start a new one (`int a, bool b`); both are valid and need
+  # no extra state for highlighting.
+  parameters:
+    - match: '\)'
+      scope: punctuation.section.parameters.end.kovy
+      pop: 2
+    - match: ','
+      scope: punctuation.separator.parameters.kovy
+    - match: '='
+      scope: keyword.operator.assignment.kovy
+      push: expression
+    - include: type
+    - match: '\b(mut)\b'
+      scope: storage.modifier.mutable.kovy
+    - match: '({{ident}})'
+      captures:
+        1: variable.parameter.kovy
+    - match: '(?=\n)'
+    - match: '[^\s]'
+      scope: invalid.illegal.unexpected-character.kovy
+
+  # type = base { "*" | "(" [ typeArg { "," typeArg } [","] ] ")" }
+  type:
+    - match: '\b({{type_keyword}})\b'
+      scope: storage.type.primitive.kovy
+      push: type-suffix
+
+  # `type` is normally included into a context that owns the surrounding
+  # declaration/parameter/type-argument list.  When a type is pushed directly
+  # (after `alloc` or `of`), this wrapper pops when the type-suffix ends.
+  type-expression:
+    - match: '[ \t]+'
+    - include: type
+    - match: '(?=[\s\S])'
+      pop: true
+
+  type-suffix:
+    # Kovy's lexer skips whitespace, so `int * p` and `int (bool)` are the
+    # same type expressions as `int* p` and `int(bool)`.  Consume horizontal
+    # whitespace before a suffix instead of ending the type at the first space.
+    - match: '[ \t]+'
+    - match: '\*+'
+      scope: storage.modifier.pointer.kovy
+    - match: '\('
+      scope: punctuation.section.type-arguments.begin.kovy
+      push: type-argument-list
+    - match: '\b(mut)\b'
+      scope: storage.modifier.mutable.kovy
+      pop: true
+    - match: '(?=[\s\S])'
+      pop: true
+
+  type-argument-list:
+    - meta_scope: meta.type.function.kovy
+    - match: '\)'
+      scope: punctuation.section.type-arguments.end.kovy
+      pop: true
+    - match: ','
+      scope: punctuation.separator.type-arguments.kovy
+    - match: '\b(mut)\b'
+      scope: storage.modifier.mutable.kovy
+    - include: type
+    - match: '(?=\n)'
+    - match: '[^\s]'
+      scope: invalid.illegal.unexpected-character.kovy
+
+  control-statement:
+    - meta_scope: meta.control.kovy
+    - match: '\b(if|elif)\b'
+      scope: keyword.control.conditional.kovy
+    - match: '\belse\b'
+      scope: keyword.control.conditional.else.kovy
+    - match: '\bwhile\b'
+      scope: keyword.control.loop.kovy
+    - match: '\breturn\b'
+      scope: keyword.control.flow.return.kovy
+    - match: '\b(break|continue)\b'
+      scope: keyword.control.flow.kovy
+    - match: ':'
+      scope: punctuation.section.block.begin.kovy
+      pop: true
+    - match: ';'
+      scope: punctuation.terminator.statement.kovy
+      pop: true
+    - match: '(?=\n)'
+      pop: true
+    - include: expression
+
+  expression:
+    # These delimiters are owned by the enclosing context: argument list,
+    # array, grouping, declaration, or control header.
+    - match: '(?=[,;\)\]\n:])'
+      pop: true
+    - include: keywords
+    - include: literals
+    - include: call
+    - include: grouping
+    - include: array
+    - include: operators
+    - include: identifier
+    - match: '[^\s]'
+      scope: invalid.illegal.unexpected-character.kovy
+
+  keywords:
+    - match: '\b(if|elif)\b'
+      scope: keyword.control.conditional.kovy
+    - match: '\belse\b'
+      scope: keyword.control.conditional.else.kovy
+    - match: '\bwhile\b'
+      scope: keyword.control.loop.kovy
+    - match: '\b(break|continue)\b'
+      scope: keyword.control.flow.kovy
+    - match: '\breturn\b'
+      scope: keyword.control.flow.return.kovy
+    - match: '\b(and|or|not)\b'
+      scope: keyword.operator.logical.kovy
+    # `alloc int` and `alloc int*` use the short allocation form; parse the
+    # following type with the dedicated type context so pointer suffixes and
+    # function types are scoped correctly.
+    - match: '\balloc\b(?=[ \t]*{{type_keyword}}\b)'
+      scope: keyword.other.alloc.kovy
+      push: type-expression
+    - match: '\balloc\b'
+      scope: keyword.other.alloc.kovy
+    - match: '\baddr\b'
+      scope: keyword.operator.address-of.kovy
+    # `of` only appears in `alloc ... of T` and `[ ... ] of T`, so the token
+    # after it is always a type expression.
+    - match: '\bof\b'
+      scope: keyword.other.of.kovy
+      push: type-expression
+    - match: '\bmut\b'
+      scope: storage.modifier.mutable.kovy
+
+  literals:
+    - match: '\b(true|false)\b'
+      scope: constant.language.boolean.kovy
+    - match: '\b\d+\b'
+      scope: constant.numeric.integer.kovy
+    - match: '\b({{type_keyword}})\b'
+      scope: storage.type.primitive.kovy
+
+  # A named call target.  The argument list is a separate context so a chained
+  # call such as `foo()(1)` or `(#p)()` can reuse it through `postfix`.
+  call:
+    - match: '({{ident}})(?=[ \t]*\()'
+      captures:
+        1: entity.name.function.call.kovy
+      push: call-arguments
+
+  call-arguments:
+    - meta_content_scope: meta.function-call.arguments.kovy
+    - match: '[ \t]*\('
+      scope: punctuation.section.arguments.begin.kovy
+    - match: '\)'
+      # `set` ends meta_content_scope before this delimiter, so add the
+      # argument-list meta explicitly to keep both call delimiters structural.
+      scope: meta.function-call.arguments.kovy punctuation.section.arguments.end.kovy
+      set: postfix
+    - match: ','
+      scope: punctuation.separator.arguments.kovy
+    - include: expression
+
+  # After a call, grouping, or array literal, `(` is a postfix call.  Chained
+  # calls are common in Kovy because function values are first class.
+  postfix:
+    - match: '(?=[ \t]*\()'
+      push: call-arguments
+    - match: '(?=[\s\S])'
+      pop: true
+
+  grouping:
+    - match: '\('
+      scope: punctuation.section.grouping.begin.kovy
+      push: grouping-body
+
+  grouping-body:
+    - meta_scope: meta.grouping.kovy
+    - match: '\)'
+      scope: punctuation.section.grouping.end.kovy
+      set: postfix
+    - match: ','
+      scope: punctuation.separator.grouping.kovy
+    - include: expression
+
+  array:
+    - match: '\['
+      scope: punctuation.section.brackets.begin.kovy
+      push: array-body
+
+  array-body:
+    - meta_scope: meta.array.kovy
+    - match: '\]'
+      scope: punctuation.section.brackets.end.kovy
+      set: postfix
+    - match: ','
+      scope: punctuation.separator.array.kovy
+    - include: expression
+
+  operators:
+    - match: '==|!=|>=|<='
+      scope: keyword.operator.comparison.kovy
+    - match: '[<>]'
+      scope: keyword.operator.comparison.kovy
+    - match: '='
+      scope: keyword.operator.assignment.kovy
+    - match: '[+\-]'
+      scope: keyword.operator.arithmetic.kovy
+    - match: '[*/]'
+      scope: keyword.operator.arithmetic.kovy
+    - match: '#+'
+      scope: keyword.operator.dereference.kovy
+    - match: '!'
+      scope: invalid.illegal.operator.kovy
+
+  identifier:
+    - match: '\b{{ident}}\b'
+      scope: variable.other.kovy
