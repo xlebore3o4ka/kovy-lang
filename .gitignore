@@ -121,3 +121,8 @@ state.json
 bin/
 all_files.txt
 gitchanges.txt
+
+# Generated documentation site
+/docs-site/site/
+/docs-site/__pycache__/
+__pycache__/
