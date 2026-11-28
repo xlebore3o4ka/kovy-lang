@@ -1,6 +1,14 @@
 import std/[json, tables, os, strutils]
 
 type
+  ErrorPhase* = enum
+    phaseUnknown = "unknown"
+    phaseLexer = "lexer"
+    phaseParser = "parser"
+    phaseSema = "sema"
+    phaseFinalize = "finalize"
+    phaseNimgen = "nimgen"
+
   ErrorKind* = enum
     errUnknownCharacter, errSyntax, errTypeSyntax, errUnknownSymbol
     errIndent
@@ -45,6 +53,7 @@ type
     col*: Positive = 1
     line*: Positive = 1
     file*: Natural
+    phase*: ErrorPhase = phaseUnknown
 
   ErrorContext* = ref object
     errors*: seq[Error]
@@ -130,8 +139,26 @@ proc formatPlaceholders(ctx: ErrorContext, ft: FileTracker, tmpl: string,
       result.add tmpl[i]
       inc i
 
-proc formatError*(ctx: ErrorContext, ft: FileTracker, err: Error): string =
+proc formatMessage*(ctx: ErrorContext, ft: FileTracker, err: Error): string =
+  ## Resolves the localized message for `err`, without any source-location
+  ## decoration.
   let data = ctx.placeholders[$err.kind]
+  ctx.formatPlaceholders(ft, data.message, err.placeholders)
+
+proc hasAddinfo(err: Error): bool =
+  # A "did you mean" suggestion is optional: there may be no close symbol.
+  err.kind != errUnknownSymbol or
+    (err.placeholders.len > 1 and err.placeholders[1].len > 0)
+
+proc formatAddinfo*(ctx: ErrorContext, ft: FileTracker, err: Error): string =
+  ## Resolves the localized addinfo for `err`, or returns an empty string when
+  ## the locale has none or when the addinfo is an empty suggestion.
+  let data = ctx.placeholders[$err.kind]
+  if data.addinfo.len == 0 or not hasAddinfo(err):
+    return ""
+  ctx.formatPlaceholders(ft, data.addinfo, err.placeholders)
+
+proc formatError*(ctx: ErrorContext, ft: FileTracker, err: Error): string =
   let path = ft.uninternFile(err.file)
   let lineText = if err.line - 1 < ft.fileLines(err.file).len: ft.fileLines(err.file)[err.line - 1] else: ""
 
@@ -141,10 +168,7 @@ proc formatError*(ctx: ErrorContext, ft: FileTracker, err: Error): string =
   result.add "  |\n"
   result.add "  | " & lineText & "\n"
   result.add "  V " & " ".repeat(err.col - 1) & marker.repeat(err.length) & "\n"
-  result.add ctx.formatPlaceholders(ft, data.message, err.placeholders) & "\n"
-  if data.addinfo != "":
-    let addinfo = ctx.formatPlaceholders(ft, data.addinfo, err.placeholders)
-    # A "did you mean" suggestion is optional: there may be no close symbol.
-    if err.kind != errUnknownSymbol or
-        (err.placeholders.len > 1 and err.placeholders[1].len > 0):
-      result.add "  " & addinfo
+  result.add ctx.formatMessage(ft, err) & "\n"
+  let addinfo = ctx.formatAddinfo(ft, err)
+  if addinfo.len > 0:
+    result.add "  " & addinfo
